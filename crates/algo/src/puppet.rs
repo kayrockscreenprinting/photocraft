@@ -470,7 +470,9 @@ impl PuppetSolver {
                 [0.5 * cot(a, b, c), 0.5 * cot(b, c, a), 0.5 * cot(c, a, b)]
             })
             .collect();
-        let bound: Vec<Bound> = pin_src.iter().map(|p| locate(&mesh, *p)).collect();
+        // Without vertices there is nothing to bind a pin to (`locate` would fall back to a vertex 0
+        // that doesn't exist, #951); every pin loop zips `bound`, so the pins are then ignored.
+        let bound: Vec<Bound> = if nv == 0 { Vec::new() } else { pin_src.iter().map(|p| locate(&mesh, *p)).collect() };
         // Connected components (union-find over triangle edges).
         let mut parent: Vec<usize> = (0..nv).collect();
         fn find(p: &mut [usize], mut i: usize) -> usize {
@@ -767,6 +769,11 @@ pub fn render(src: &Surface, bounds: Rect, mesh: &PuppetMesh, deformed: &[[f64; 
 /// Applies a puppet warp to `src` (content inside `bounds`).
 pub fn puppet_warp(src: &Surface, bounds: Rect, w: &PuppetWarp, interp: Interp) -> Surface {
     let (solver, v, order) = deform(src, bounds, w, ITERATIONS);
+    // No triangles (an expansion that shrinks every pixel away): nothing to warp. Rendering the
+    // empty mesh would drop every pixel of the layer.
+    if solver.mesh.tris.is_empty() {
+        return src.clone();
+    }
     render(src, bounds, &solver.mesh, &v, &order, interp)
 }
 
@@ -830,6 +837,26 @@ mod tests {
                 assert!(worst <= 1.0 / 255.0 + 1e-6, "{st:?}: {worst}");
             }
         }
+    }
+
+    #[test]
+    fn an_expansion_that_empties_the_mesh_warps_nothing() {
+        // #951: with pins and no vertices, `locate` fell back to vertex 0 and the solver indexed
+        // its empty union-find.
+        let solver = PuppetSolver::new(PuppetMesh::default(), &[[10.0, 10.0]], &[true]);
+        assert!(solver.mesh.verts.is_empty());
+        let s = blob(SampleType::U8);
+        let b = s.content_bounds();
+        let w = PuppetWarp {
+            pins: vec![PuppetPin { src: [28.0, 30.0], dst: [38.0, 25.0], rotate: None, depth: 0 }],
+            mode: PuppetMode::Normal,
+            density: PuppetDensity::Normal,
+            expansion: -200.0,
+        };
+        assert!(build_mesh(&s, b, w.density, w.expansion).tris.is_empty());
+        // Nothing to warp: the pixels stay, rather than being dropped outside an empty mesh.
+        let out = puppet_warp(&s, b, &w, Interp::Bilinear);
+        assert_eq!(out.read_region(b), s.read_region(b));
     }
 
     #[test]

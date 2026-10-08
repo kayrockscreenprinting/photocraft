@@ -125,6 +125,16 @@ fn puppet_identity_translation_and_undo() {
 }
 
 #[test]
+fn puppet_with_an_expansion_that_empties_the_mesh_keeps_the_layer() {
+    // #951: a pinned warp over an empty mesh panicked in the solver; it must not erase the layer
+    // either (the rasterizer keeps only pixels inside the mesh).
+    let mut s = session(8);
+    let before = active_surface(&s);
+    s.execute(PUPPET, json!({"pins": [{"src": [30, 25], "dst": [36, 29]}], "expansion": -200})).unwrap();
+    assert_eq!(active_surface(&s).read_region(Rect::new(0, 0, 80, 60)), before.read_region(Rect::new(0, 0, 80, 60)));
+}
+
+#[test]
 fn puppet_two_pins_bend_the_block() {
     let mut s = session(8);
     // Hold the left end, lift the right end: the right side rises, the left stays.
