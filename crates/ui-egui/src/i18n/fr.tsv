@@ -2461,6 +2461,7 @@
 	Invalid {mode} profile	Profil {mode} non valide
 	Unnamed {mode} profile	Profil {mode} sans nom
 	Show bounding box when dragging layer	Afficher le cadre de sélection lors du déplacement du calque
+	System title bar	Barre de titre du système
 	Freeze Lasso: drag to freeze an area, Alt-drag to thaw it (L)	Lasso de figeage : faites glisser pour figer une zone, Alt+glisser pour la libérer (L)
 	Rendering Mode	Mode de rendu
 	Automatic (recommended)	Automatique (recommandé)

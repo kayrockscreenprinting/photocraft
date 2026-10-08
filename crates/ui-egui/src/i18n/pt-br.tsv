@@ -2457,6 +2457,7 @@
 	Invalid {mode} profile	Perfil {mode} inválido
 	Unnamed {mode} profile	Perfil {mode} sem nome
 	Show bounding box when dragging layer	Mostrar caixa delimitadora ao arrastar a camada
+	System title bar	Barra de título do sistema
 	Freeze Lasso: drag to freeze an area, Alt-drag to thaw it (L)	Laço de congelamento: arraste para congelar uma área, Alt-arraste para descongelá-la (L)
 	Rendering Mode	Modo de renderização
 	Automatic (recommended)	Automático (recomendado)

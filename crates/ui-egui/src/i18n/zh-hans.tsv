@@ -1850,6 +1850,7 @@
 	Show slice numbers	显示切片编号
 	Show tooltips	显示工具提示
 	Show bounding box when dragging layer	拖动图层时显示边界框
+	System title bar	系统标题栏
 	Show transformation values	显示变换值
 	Slice color	切片颜色
 	Smart guide color	智能参考线颜色
