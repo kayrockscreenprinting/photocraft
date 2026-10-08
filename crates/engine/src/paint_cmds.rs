@@ -1,6 +1,6 @@
 //! Paint helpers: Paint Bucket and Gradient tool.
 
-use photocraft_algo::paint::{GradientShape, bucket_fill, bucket_fill_src, paint_gradient};
+use photocraft_algo::paint::{GradientShape, bucket_fill_sampled, bucket_fill_src, paint_gradient};
 use serde_json::{Value, json};
 
 use crate::commands::{CommandSpec, blend_from_str};
@@ -51,20 +51,29 @@ fn bucket(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         None
     };
+    // "All Layers" finds the region in the merged image, as the Magic Wand does, and still fills
+    // the active layer. A mask or channel target samples itself, as the retouch tools do.
+    let merged = if b(p, "sampleAllLayers", false) && crate::channel_cmds::target_of(p) == crate::channel_cmds::Target::Pixels {
+        Some(crate::selection_cmds::sample_rgba8(s, true)?.1)
+    } else {
+        None
+    };
     let filled = s.edit("Paint Bucket", |doc, active| {
         let area = doc.bounds();
         let sel = doc.selection.clone();
         let (surf, _) = crate::channel_cmds::target_surface(doc, *active, p)?;
+        let fill = |surf: &mut photocraft_raster::Surface, src: &(dyn Fn(i32, i32) -> [f32; 4] + Sync)| match &merged {
+            Some(img) => bucket_fill_sampled(surf, area, img, (x, y), tol, contiguous, aa, opacity, sel.as_ref(), src),
+            None => bucket_fill_src(surf, area, (x, y), tol, contiguous, aa, opacity, sel.as_ref(), src),
+        };
         let ok = if let Some((tile, scale, angle, phase)) = &pattern {
             // Render the pattern over the canvas once, then sample it at each filled pixel.
             let place = photocraft_compose::pattern::Placement::new(photocraft_geom::Rect::EMPTY, false, *phase, *scale, *angle);
             let rendered = photocraft_compose::pattern::render(tile, &place, area);
             let w = area.width() as usize;
-            bucket_fill_src(surf, area, (x, y), tol, contiguous, aa, opacity, sel.as_ref(), |px, py| {
-                rendered[(py - area.y0) as usize * w + (px - area.x0) as usize]
-            })
+            fill(surf, &|px, py| rendered[(py - area.y0) as usize * w + (px - area.x0) as usize])
         } else {
-            bucket_fill(surf, area, (x, y), tol, contiguous, aa, c, opacity, sel.as_ref())
+            fill(surf, &|_, _| c)
         };
         surf.prune();
         Ok(ok)
@@ -117,7 +126,7 @@ pub fn specs() -> Vec<CommandSpec> {
             label: "Paint Bucket",
             menu: &[],
             shortcut: None,
-            params: r##"{"x":px,"y":px,"tolerance":0..255=32,"contiguous":bool=true,"antiAlias":bool=true,"contents":"foreground|pattern"="foreground","color":"#rrggbb"=foreground,"pattern":id|name (contents=pattern),"scale":%=100,"angle":deg,"opacity":1..100=100,"target":"pixels"|"mask"|"quickMask"|{"channel":i}=Channels panel target}"##,
+            params: r##"{"x":px,"y":px,"tolerance":0..255=32,"contiguous":bool=true,"antiAlias":bool=true,"sampleAllLayers":bool=false (find the region in the merged image; still fills the active layer),"contents":"foreground|pattern"="foreground","color":"#rrggbb"=foreground,"pattern":id|name (contents=pattern),"scale":%=100,"angle":deg,"opacity":1..100=100,"target":"pixels"|"mask"|"quickMask"|{"channel":i}=Channels panel target}"##,
             enabled: crate::commands::has_paintable,
             run: bucket,
             journal: true,
@@ -186,6 +195,29 @@ mod tests {
             .collect();
         assert!(left.iter().any(|p| p[0] < 0.3) && left.iter().any(|p| p[0] > 0.9), "pattern varies in the fill: {left:?}");
         assert_eq!(px(&s, 15, 5), vec![1.0, 1.0, 1.0, 1.0], "region past the wall untouched");
+    }
+
+    #[test]
+    fn bucket_all_layers_finds_the_region_in_the_merged_image() {
+        // #1118: with a wall on the Background and an empty layer active, the bucket saw only the
+        // empty layer and filled all of it, with All Layers on or off.
+        let fill = |all: bool| {
+            let mut s = session();
+            s.edit("wall", |doc, _| {
+                doc.layers[0].surface_mut().unwrap().fill_rect(Rect::new(10, 0, 11, 10), &[0.0, 0.0, 0.0, 1.0]);
+                Ok(())
+            })
+            .unwrap();
+            s.execute("layer.new.layer", json!({})).unwrap();
+            s.execute("paint.bucket", json!({"x": 2, "y": 2, "color": "#ff0000", "antiAlias": false, "sampleAllLayers": all})).unwrap();
+            let background = s.active().unwrap().doc.layers[0].surface().unwrap().pixel(5, 5);
+            ([5, 10, 15].map(|x| px(&s, x, 5)[3]), px(&s, 5, 5), background)
+        };
+        assert_eq!(fill(false).0, [1.0, 1.0, 1.0], "on its own the empty layer is one region");
+        let (alpha, left, background) = fill(true);
+        assert_eq!(alpha, [1.0, 0.0, 0.0], "the merged wall stops the fill");
+        assert_eq!(left, vec![1.0, 0.0, 0.0, 1.0], "the active layer is filled");
+        assert_eq!(background, vec![1.0, 1.0, 1.0, 1.0], "the sampled layers are untouched");
     }
 
     #[test]

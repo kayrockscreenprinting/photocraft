@@ -183,6 +183,40 @@ pub fn bucket_fill_src(
     let img = crate::selection::rgba8_image(s, area);
     let Some(region) = crate::selection::wand_region(&img, area, seed, tolerance, contiguous, anti_alias) else { return false };
     drop(img);
+    fill_region(s, &region, opacity, selection, src)
+}
+
+/// Like [`bucket_fill_src`] but the region similar to the seed is found in `sample` (8-bit RGBA
+/// over `area`, row-major) rather than in `s`: the Paint Bucket's "All Layers" passes the merged
+/// image here and still fills `s`.
+#[allow(clippy::too_many_arguments)]
+pub fn bucket_fill_sampled(
+    s: &mut Surface,
+    area: Rect,
+    sample: &[[u8; 4]],
+    seed: (i32, i32),
+    tolerance: f32,
+    contiguous: bool,
+    anti_alias: bool,
+    opacity: f32,
+    selection: Option<&Surface>,
+    src: impl Fn(i32, i32) -> [f32; 4] + Sync,
+) -> bool {
+    let (w, h) = (area.width() as usize, area.height() as usize);
+    if !area.contains(seed.0, seed.1) || w.checked_mul(h) != Some(sample.len()) {
+        return false;
+    }
+    let Some(region) = crate::selection::wand_region(sample, area, seed, tolerance, contiguous, anti_alias) else { return false };
+    fill_region(s, &region, opacity, selection, src)
+}
+
+fn fill_region(
+    s: &mut Surface,
+    region: &crate::selection::Region,
+    opacity: f32,
+    selection: Option<&Surface>,
+    src: impl Fn(i32, i32) -> [f32; 4] + Sync,
+) -> bool {
     // Composite only over the filled region's box.
     let b = region.bbox;
     composite_area(s, b, BlendMode::Normal, |x, y| region.at(x, y) * opacity * selection.map_or(1.0, |m| m.sample_channel(x, y, 0)), src, false);
@@ -239,5 +273,20 @@ mod tests {
         assert_eq!(s.pixel(2, 2), vec![1.0, 0.0, 0.0, 1.0]);
         assert_eq!(s.pixel(8, 2), vec![1.0, 1.0, 1.0, 1.0]);
         assert!(!bucket_fill(&mut s, a, (50, 1), 10.0, true, false, [1.0, 0.0, 0.0, 1.0], 1.0, None));
+    }
+
+    #[test]
+    fn bucket_fill_sampled_takes_the_region_from_the_sample() {
+        // The target is empty; the sample has a wall at x = 5, so only the left of it fills.
+        let mut s = Surface::new(PixelFormat::RGBA8);
+        let a = Rect::new(0, 0, 10, 2);
+        let sample: Vec<[u8; 4]> = (0..20).map(|i| if i % 10 == 5 { [0, 0, 0, 255] } else { [255; 4] }).collect();
+        let red = |_, _| [1.0, 0.0, 0.0, 1.0];
+        assert!(bucket_fill_sampled(&mut s, a, &sample, (1, 1), 10.0, true, false, 1.0, None, red));
+        assert_eq!(s.pixel(2, 1), vec![1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(s.pixel(5, 1)[3], 0.0, "the wall");
+        assert_eq!(s.pixel(8, 1)[3], 0.0, "past the wall");
+        // A sample that doesn't cover the area is refused rather than indexed.
+        assert!(!bucket_fill_sampled(&mut s, a, &sample[..19], (1, 1), 10.0, true, false, 1.0, None, red));
     }
 }
