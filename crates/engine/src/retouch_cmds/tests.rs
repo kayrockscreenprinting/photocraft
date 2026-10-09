@@ -926,3 +926,39 @@ fn clone_and_heal_with_a_far_source_are_plain_errors() {
         s.execute(cmd, json!({"points": [[10, 10], [30, 10]], "source": [2147483000, 0]})).unwrap();
     }
 }
+
+#[test]
+fn retouch_strokes_refuse_absurd_point_coordinates() {
+    // #976: the retouch tools' `points` skipped the ±1e6 bound the painting tools apply, so a
+    // segment to (1e300, 0) had an infinite length and the dab walker never stopped.
+    let cmds = [
+        "paint.dodge",
+        "paint.burn",
+        "paint.sponge",
+        "paint.blur",
+        "paint.sharpen",
+        "paint.smudge",
+        "paint.cloneStamp",
+        "paint.healingBrush",
+        "paint.spotHealing",
+        "paint.historyBrush",
+    ];
+    // A single far point first: cheap even without the bound, so a regression fails fast.
+    let far = [json!([[1_000_001, 0]]), json!([[0, 0], [0, -2_000_000]]), json!([[0, 0], [1e300, 0]]), json!([[1e300, 1e300]])];
+    for depth in DEPTHS {
+        let mut s = session(32, 32, depth, "rgb");
+        paint_layer(&mut s, |x, y| [x as f32 / 32.0, y as f32 / 32.0, 0.25, 1.0]);
+        s.execute("cloneSource.set", json!({"source": [8, 8]})).unwrap();
+        let (before, past) = (rgba(&s, 16, 16), s.active().unwrap().history.past_len());
+        for cmd in cmds {
+            for points in &far {
+                let err = s.execute(cmd, json!({ "points": points })).unwrap_err();
+                assert!(err.to_string().contains("within ±"), "{cmd} {points} at {depth}: {err}");
+            }
+        }
+        assert_eq!((rgba(&s, 16, 16), s.active().unwrap().history.past_len()), (before, past), "{depth}: nothing changed");
+        // Control: a stroke on the canvas still retouches.
+        s.execute("paint.dodge", json!({"points": [[4, 16], [28, 16]], "size": 8})).unwrap();
+        assert_ne!(rgba(&s, 16, 16), before, "{depth}");
+    }
+}
