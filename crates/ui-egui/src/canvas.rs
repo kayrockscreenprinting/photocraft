@@ -1104,6 +1104,9 @@ fn gpu_budget(app: &mut PhotocraftApp, gpu: &crate::gpu_canvas::GpuCanvas, idx: 
 
 /// Live preview for an open filter dialog: run the filter on the proxy and upload it.
 fn ensure_filter_preview(app: &mut PhotocraftApp, idx: usize) -> Option<(u32, u64, [u32; 2])> {
+    if let Some(held) = committed_filter_preview(app, idx) {
+        return held;
+    }
     if crate::adjust_preview::on_layer(app, idx) {
         return None;
     }
@@ -1132,11 +1135,32 @@ fn ensure_filter_preview(app: &mut PhotocraftApp, idx: usize) -> Option<(u32, u6
             app.gpu.as_ref()?.upload_buffer_full(key, &texture_buffer(display.as_deref(), &buf), doc.depth);
             app.perf.record("filter-preview", r.size.area(), t1 - t0, crate::gpu_canvas::now_ms() - t1);
         }
-        app.filter_preview = Some(crate::filter_dialog::FilterPreview { doc: doc_id, revision, hash, k, result });
+        app.filter_preview = Some(crate::filter_dialog::FilterPreview { doc: doc_id, revision, hash, k, result, committing: false });
     }
     let preview = app.filter_preview.as_ref()?;
     let result = preview.result.as_ref()?;
     Some((preview.k, key, [result.size.width, result.size.height]))
+}
+
+/// After a filter dialog's OK: `Some(shown)` while its preview stands in for the background job
+/// that commits it (the document unchanged and the job still running, for this document's views),
+/// `None` otherwise (other documents' views included). A job that lands, fails or is cancelled
+/// drops it.
+pub(crate) fn committed_filter_preview(app: &mut PhotocraftApp, idx: usize) -> Option<Option<(u32, u64, [u32; 2])>> {
+    let p = app.filter_preview.as_ref().filter(|p| p.committing)?;
+    let st = app.session.documents().get(idx)?;
+    if st.doc.id != p.doc {
+        return None;
+    }
+    let size = p.result.as_ref().map(|r| [r.size.width, r.size.height]);
+    if let Some(size) = size
+        && st.revision == p.revision
+        && app.session.job_on(p.doc).is_some()
+    {
+        return Some(Some((p.k, p.doc.0 ^ (1u64 << 61), size)));
+    }
+    app.filter_preview = None;
+    Some(None)
 }
 
 /// The document pixels a view shows, with a margin for filtering. Uses all four canvas corners

@@ -350,10 +350,22 @@ pub fn confirm(app: &mut PhotocraftApp, id: u64) -> Result<Value, String> {
         DialogKind::Command if crate::prefs_ui::owns(&d.fields) => crate::prefs_ui::confirm(app, &d.fields),
         DialogKind::Command if d.fields.contains_key("__export") => crate::export_dialog::confirm(app, &d.fields),
         DialogKind::Command => {
-            app.filter_preview = None;
-            let cmd = d.fields.get("__command").and_then(|v| v.as_str().map(str::to_string)).ok_or("dialog has no command")?;
+            let Some(cmd) = d.fields.get("__command").and_then(Value::as_str).map(str::to_string) else {
+                app.filter_preview = None;
+                return Err("dialog has no command".into());
+            };
             let (cmd, params) = crate::smart_ui::confirm_command(&d.fields, cmd, crate::filter_dialog::params_of(&d.fields));
             let result = app.run(&cmd, params.clone());
+            // A filter that runs as a background job keeps its preview on screen until the job
+            // lands (`canvas::committed_filter_preview`) instead of flashing the unfiltered image.
+            let running = app
+                .session
+                .active()
+                .is_some_and(|st| app.filter_preview.as_ref().is_some_and(|p| p.doc == st.doc.id) && app.session.job_on(st.doc.id).is_some());
+            match app.filter_preview.as_mut() {
+                Some(p) if result.is_ok() && running => p.committing = true,
+                _ => app.filter_preview = None,
+            }
             if result.is_ok() && cmd == "view.newGuideLayout" {
                 app.ui.view.guide_layout = params;
             }
@@ -388,6 +400,58 @@ pub fn open_command_dialog(app: &mut PhotocraftApp, command: &str, label: &str) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A filter dialog over a 256×256 layer, with the preview the canvas computed for it on screen.
+    fn filter_dialog_with_preview(background: bool) -> (PhotocraftApp, u64) {
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        app.background_jobs = background;
+        app.run("file.new", serde_json::json!({"width": 256, "height": 256, "background": "#3366cc"})).unwrap();
+        let id = open_command_dialog(&mut app, "filter.blur.gaussianBlur", "Gaussian Blur");
+        let st = app.session.active().unwrap();
+        let result = crate::filter_dialog::preview_document(&st.doc, st.active_layer, "filter.blur.gaussianBlur", &serde_json::json!({"radius": 4.0}), 1);
+        app.filter_preview = Some(crate::filter_dialog::FilterPreview {
+            doc: st.doc.id,
+            revision: st.revision,
+            hash: 0,
+            k: 1,
+            result: result.map(std::sync::Arc::new),
+            committing: false,
+        });
+        (app, id)
+    }
+
+    #[test]
+    fn a_filters_preview_stays_on_screen_until_its_job_lands() {
+        // OK dropped the preview and the filter ran as a background job, so the canvas flashed
+        // the unfiltered image until the job finished.
+        let (mut app, id) = filter_dialog_with_preview(true);
+        let revision = app.session.active().unwrap().revision;
+        confirm(&mut app, id).unwrap();
+        let doc = app.session.active().unwrap().doc.id;
+        let job = app.session.job_on(doc).expect("the blur runs as a background job").id;
+        assert!(matches!(crate::canvas::committed_filter_preview(&mut app, 0), Some(Some((1, _, [256, 256])))), "the preview is shown");
+        // The job lands: the document changes and the preview goes.
+        app.session.wait_job(job).unwrap();
+        assert_ne!(app.session.active().unwrap().revision, revision);
+        assert_eq!(crate::canvas::committed_filter_preview(&mut app, 0), Some(None));
+        assert!(app.filter_preview.is_none());
+
+        // A cancelled job leaves the document as it was, so its preview goes too.
+        let (mut app, id) = filter_dialog_with_preview(true);
+        confirm(&mut app, id).unwrap();
+        let doc = app.session.active().unwrap().doc.id;
+        let job = app.session.job_on(doc).unwrap().id;
+        assert!(matches!(crate::canvas::committed_filter_preview(&mut app, 0), Some(Some(_))));
+        assert!(app.session.cancel_job(job));
+        assert_eq!(crate::canvas::committed_filter_preview(&mut app, 0), Some(None));
+        assert!(app.filter_preview.is_none());
+
+        // Inline (no background jobs): the filter has already landed, nothing is held.
+        let (mut app, id) = filter_dialog_with_preview(false);
+        confirm(&mut app, id).unwrap();
+        assert!(app.filter_preview.is_none());
+        assert_eq!(crate::canvas::committed_filter_preview(&mut app, 0), None);
+    }
 
     #[test]
     fn color_picker_has_inset_content_and_actions_at_the_right_edge() {

@@ -430,6 +430,9 @@ pub struct FilterPreview {
     pub hash: u64,
     pub k: u32,
     pub result: Option<Arc<Document>>,
+    /// OK was pressed and the filter runs as a background job: the preview stays on screen until
+    /// the job lands, so the canvas doesn't flash the unfiltered image in between.
+    pub committing: bool,
 }
 
 #[cfg(test)]
