@@ -158,16 +158,48 @@ fn new_adjustment_and_fill_layers_are_masked_by_the_selection() {
 }
 
 #[test]
-fn new_adjustment_and_fill_layers_have_no_mask_without_a_selection() {
-    let mut s = session_with_doc();
-    for (id, params) in [
-        ("layer.newAdjustmentLayer.invert", json!({})),
-        ("layer.newFillLayer.solidColor", json!({"color": "#000000"})),
-        ("layer.newFillLayer.gradient", json!({})),
-        ("layer.newFillLayer.pattern", json!({"pattern": "Checkerboard"})),
-    ] {
-        let layer = LayerId(s.execute(id, params).unwrap()["layer"].as_u64().unwrap());
-        assert!(s.active().unwrap().doc.layer(layer).unwrap().mask.is_none(), "{id} got a mask with no selection");
+fn new_adjustment_and_fill_layers_have_white_masks_without_a_selection() {
+    for depth in [8, 16, 32] {
+        for (id, params) in [
+            ("layer.newAdjustmentLayer.invert", json!({})),
+            ("layer.newFillLayer.solidColor", json!({"color": "#000000"})),
+            ("layer.newFillLayer.gradient", json!({})),
+            ("layer.newFillLayer.pattern", json!({"pattern": "Checkerboard"})),
+        ] {
+            let mut s = Session::new();
+            s.execute("file.new", json!({"width": 64, "height": 48, "depth": depth})).unwrap();
+            let history = s.active().unwrap().history.entries().len();
+            let layer = LayerId(s.execute(id, params).unwrap()["layer"].as_u64().unwrap());
+            let d = s.active().unwrap();
+            let mask = d.doc.layer(layer).unwrap().mask.as_ref().unwrap_or_else(|| panic!("{id} at {depth}-bit: no mask"));
+            assert!(mask.enabled && mask.linked, "{id}");
+            assert_eq!(mask.surface.tile_count(), 0, "a reveal-all mask does not allocate canvas-sized pixels");
+            for (x, y) in [(0, 0), (63, 47), (-1, -1), (300_000, 300_000)] {
+                assert_eq!(mask.value(x, y), 1.0, "{id}: the default mask reveals all pixels");
+            }
+            assert_eq!(d.history.entries().len(), history + 1, "the mask belongs to the layer's one history step");
+            s.execute("edit.undo", json!({})).unwrap();
+            assert!(s.active().unwrap().doc.layer(layer).is_none());
+            s.execute("edit.redo", json!({})).unwrap();
+            assert_eq!(s.active().unwrap().doc.layer(layer).unwrap().mask.as_ref().unwrap().value(20, 20), 1.0);
+        }
+    }
+}
+
+#[test]
+fn a_new_adjustment_mask_can_be_painted_immediately() {
+    for depth in [8, 16, 32] {
+        let mut s = Session::new();
+        s.execute("file.new", json!({"width": 64, "height": 48, "depth": depth})).unwrap();
+        s.execute("layer.newAdjustmentLayer.invert", json!({})).unwrap();
+        assert_eq!(px(&mut s, 20, 20), vec![0.0, 0.0, 0.0, 1.0]);
+        s.execute("paint.stroke", json!({"points": [[20, 20]], "size": 10, "hardness": 1.0, "color": "#000000", "target": "mask"})).unwrap();
+        assert_eq!(px(&mut s, 20, 20), vec![1.0, 1.0, 1.0, 1.0]);
+        assert_eq!(px(&mut s, 2, 2), vec![0.0, 0.0, 0.0, 1.0]);
+        s.execute("edit.undo", json!({})).unwrap();
+        assert_eq!(px(&mut s, 20, 20), vec![0.0, 0.0, 0.0, 1.0]);
+        s.execute("edit.redo", json!({})).unwrap();
+        assert_eq!(px(&mut s, 20, 20), vec![1.0, 1.0, 1.0, 1.0]);
     }
 }
 
@@ -637,7 +669,8 @@ fn translate_moves_pixels_and_respects_locks() {
 fn damage_is_reported_for_strokes_only() {
     let mut s = session_with_doc();
     s.execute("layer.new.layer", json!({})).unwrap();
-    assert_eq!(s.active().unwrap().last_damage, None);
+    // A new empty layer changes no pixels (#1771).
+    assert_eq!(s.active().unwrap().last_damage, Some(photocraft_geom::Rect::EMPTY));
     s.execute("paint.stroke", json!({"points": [[10, 10], [20, 10]], "size": 4})).unwrap();
     let d = s.active().unwrap().last_damage.unwrap();
     assert!(d.contains(15, 10) && d.width() < 30);

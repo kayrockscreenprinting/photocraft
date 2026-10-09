@@ -5,6 +5,29 @@
 - Rust stable (1.95+). Add the web target with `rustup target add wasm32-unknown-unknown`.
 - macOS, Windows or Linux. Linux needs `libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev`.
 
+### Windows source builds
+
+Use the Rust MSVC toolchain and install Visual Studio or Microsoft C++ Build Tools with the
+**Desktop development with C++** workload. Follow Microsoft's
+[Rust setup guide](https://learn.microsoft.com/en-us/windows/dev-environment/rust/setup),
+then open a new terminal and check `cargo --version` and `rustc --version`.
+
+On Windows 11, Smart App Control can block Cargo, rustc or executables generated during a build.
+If a build reports `An Application Control policy has blocked this file. (os error 4551)`
+([#1585](https://github.com/storytold/photocraft/issues/1585)), check:
+
+- **Windows Security → App & browser control → Smart App Control settings** for its status.
+- **Event Viewer → Applications and Services Logs → Microsoft → Windows → CodeIntegrity →
+  Operational** for the blocked executable and policy, especially on managed machines.
+
+This error indicates an application-control restriction; moving `CARGO_TARGET_DIR` or
+reinstalling Rust does not establish that the blocked executable is trusted. See Microsoft's
+[Smart App Control FAQ](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions)
+for the available controls; there is no per-app exception. On a managed device, ask your
+administrator about an approved development environment. If you only want to run PhotoCraft,
+use the [packaged Windows release](https://github.com/storytold/photocraft/releases) to avoid
+building locally; the downloaded app is still subject to Windows application-control checks.
+
 ## Build and run
 
 ```sh
@@ -65,8 +88,8 @@ By default PhotoCraft's own crates log at `info` and everything else at `warn`. 
 | `RUST_LOG` | Log levels for standard error and the log file (see [Logs](#logs)) |
 | `PHOTOCRAFT_CONTROL_TOKEN` | 64-hex bearer token for control TCP (avoid on shared systems where environment inspection is possible) |
 | `PHOTOCRAFT_CONTROL_TOKEN_FILE` | Read, or create for a server, the control bearer-token file |
-| `PHOTOCRAFT_AUTOMATION_READ_ROOT` | Directory capability for automation reads; requests use relative paths |
-| `PHOTOCRAFT_AUTOMATION_WRITE_ROOT` | Separate directory capability for automation writes; requests use relative paths |
+| `PHOTOCRAFT_AUTOMATION_READ_ROOT` | Desktop app only: automation read root. Headless CLI modes require the `--automation-read-root` flag |
+| `PHOTOCRAFT_AUTOMATION_WRITE_ROOT` | Desktop app only: automation write root. Headless CLI modes require the `--automation-write-root` flag |
 | `PHOTOCRAFT_CPU_CANVAS=1` | Force the CPU canvas path instead of the wgpu shader canvas |
 | `PHOTOCRAFT_NATIVE_WAYLAND=1` | Linux: stay on native Wayland when a pen is attached (by default the window then opens through Xwayland, because Wayland gives the app no pen input; #639) |
 | `WGPU_BACKEND=dx12` | Pick the wgpu backend(s) (`vulkan`, `dx12`, `metal`, `gl`); overrides `performance.gpuBackend` and the startup fallback |
@@ -138,6 +161,8 @@ Keep one `PcraftWriter` per open document: re-saving then only compresses and wr
 - **Headless:** `photocraft-cli mcp --automation-read-root <dir> --automation-write-root <dir>`. It drives an in-process engine session and has no file authority when a root is omitted.
 - **Live app:** start `photocraft --control 7878 --control-token-file <private-path> --automation-read-root <dir> --automation-write-root <dir>`, then run `photocraft-cli mcp --bridge 127.0.0.1:7878 --control-token-file <private-path>`. The desktop process owns the roots. See `docs/control-protocol.md#mcp-bridge`.
 
+For headless MCP clients, pass absolute paths to deliberately chosen trusted workspace directories in the launch arguments. Desktop `PHOTOCRAFT_AUTOMATION_READ_ROOT` and `PHOTOCRAFT_AUTOMATION_WRITE_ROOT` environment variables do **not** grant headless CLI access. Omitting a root flag deliberately denies that direction of access.
+
 Tools:
 
 - `session_list`
@@ -153,7 +178,7 @@ Claude Code (`.mcp.json` in the repo root, or `claude mcp add`):
   "mcpServers": {
     "photocraft": {
       "command": "/path/to/photocraft/target/release/photocraft-cli",
-      "args": ["mcp"]
+      "args": ["mcp", "--automation-read-root", "/absolute/path/to/trusted/workspace", "--automation-write-root", "/absolute/path/to/trusted/workspace"]
     },
     "photocraft-live": {
       "command": "/path/to/photocraft/target/release/photocraft-cli",
@@ -165,11 +190,16 @@ Claude Code (`.mcp.json` in the repo root, or `claude mcp add`):
 
 ```sh
 cargo build --release -p photocraft-cli
-claude mcp add photocraft -- "$PWD/target/release/photocraft-cli" mcp
+mkdir -p "$PWD/photocraft-work"
+claude mcp add photocraft -- "$PWD/target/release/photocraft-cli" mcp \
+  --automation-read-root "$PWD/photocraft-work" \
+  --automation-write-root "$PWD/photocraft-work"
 ```
 
 `doc_inspect` (and the engine command `document.inspect`) reports the layer tree with kinds,
-bounds, masks, selection, effects (`effects.items[].kind`), smart filters (`smartFilters[]`), type
+bounds, masks, selection, effects (`effects.items[].kind`), smart filters (`smartFilters[]`), smart
+object sources (`smartSource`: `embedded` with its file name, or `linked` with a file path or, for a
+PSD placed layer, the `Idnt` uuid its duplicates share), type
 text, adjustment settings, channels and history, so agents can verify what they did without a
 screenshot. `crates/automation/tests/agent_tasks.rs` is the reference: ten realistic edit tasks
 (title card, colour grade, undo/redo, editable smart blur, masks, saved selections, align,
@@ -178,7 +208,7 @@ capability-scoped export, resize/crop, CMYK + native save) driven purely over MC
 Without MCP, `photocraft-cli serve [--port N]` keeps a headless session open and answers JSON lines
 (see `docs/control-protocol.md#headless-server`).
 
-A typical agent loop:
+A typical agent loop (place inputs under the configured read root and outputs under the write root):
 
 1. `doc_open {path}`
 2. `command_list {filter:"blur"}`
@@ -323,6 +353,28 @@ How the web shell (`apps/photocraft-web/src/web.rs`) differs from desktop:
 - **No control server:** browsers can't listen on TCP. To automate the web build, drive headless Chrome with `--remote-debugging-port`. `Page.setInterceptFileChooserDialog` plus `DOM.setFileInputFiles` covers Open, `Input.dispatchDragEvent` with `files` covers drops, and `Browser.setDownloadBehavior` captures downloads.
 - Headless Chrome on macOS (`--headless=new --enable-unsafe-webgpu`) gets a real WebGPU adapter.
 
+
+## Indexed Color timings
+
+`cargo run --release -p photocraft-engine --example indexed_color_perf -- image.png` measures
+palette construction, Floyd–Steinberg diffusion, and the complete full-resolution CPU preview
+path (proxy copy, engine command, result composition; excludes GPU upload/presentation).
+It prints JSON lines for 8, 16, 32, 64, 128 and 256 colours, with one warmup and three measured
+runs per count, plus palette and pixel hashes for exact before/after comparisons. Input files
+stay local; do not publish personal images, palettes, or metadata with benchmark reports.
+
+The synthetic 24 MP lookup comparison is reproducible with
+`cargo test --release -p photocraft-algo indexed_diffusion_24mp_release_comparison -- --ignored --nocapture`.
+It alternates linear/accelerated lookup order and checks identical indices and pixels.
+For the 2026-10-09 local timings both binaries used `CARGO_PROFILE_RELEASE_LTO=false` and
+`CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16`; compare binaries built with the same settings.
+
+On native desktop sessions, Indexed Color live previews calculate and flatten on one worker.
+The last preview remains visible while dragging; intermediate settings are coalesced, and only
+a result matching the current document revision, active layer, dialog and parameters is uploaded.
+GPU upload/display conversion still run on the UI thread. Web and `PHOTOCRAFT_INLINE_JOBS=1`
+sessions retain synchronous previews. Closing the dialog invalidates its result; an already
+running calculation finishes without editing the session.
 
 ## Offscreen UI snapshots (no window)
 
