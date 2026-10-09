@@ -178,11 +178,16 @@ fn stroke(s: &mut Session, p: &Value) -> Result<Value> {
             "outside" => (width, 0),
             _ => (width / 2, width.div_ceil(2)),
         };
+        // A hard-edged selection strokes hard, matching Photoshop pixel for pixel on curves:
+        // outside, a pixel is stroked when its centre is less than width + 1 from a selected
+        // pixel's; inside, less than width + ½ from an unselected pixel's (fitted to Photoshop's
+        // strokes of a 14 px circle: 6 px Outside; 3, 5 and 6 px Inside). Both give whole
+        // pixels on straight edges. Soft selections keep soft edges.
+        let hard = padded.iter().all(|v| *v <= 0.0 || *v >= 1.0);
+        let in_r = if hard && in_px > 0 { in_px as f32 - 0.5 } else { in_px as f32 };
         let mut outer = sel::expand(&padded, pw, ph, out_px as f32);
-        let mut inner = sel::contract(&padded, pw, ph, in_px as f32);
-        // A hard-edged selection strokes hard, as in Photoshop: a pixel whose centre is less than
-        // width + 1 from a selected pixel's is stroked whole, so curves get no partial pixels.
-        if padded.iter().all(|v| *v <= 0.0 || *v >= 1.0) {
+        let mut inner = sel::contract(&padded, pw, ph, in_r);
+        if hard {
             outer.iter_mut().for_each(|v| *v = if *v > 0.0 { 1.0 } else { 0.0 });
             inner.iter_mut().for_each(|v| *v = if *v >= 1.0 { 1.0 } else { 0.0 });
         }
@@ -1018,22 +1023,101 @@ mod tests {
         "..................................",
     ];
 
-    #[test]
-    fn a_hard_circle_strokes_like_photoshop() {
-        let rows = PS_CIRCLE_OUTSIDE_6;
+    /// Photoshop's 3 px Inside stroke of the same 14 px hard circle (the selection is the ring
+    /// plus its hole). Inside, a pixel is stroked when its centre is less than width + ½ from an
+    /// unselected pixel's: that offset is the one fitting this, the 5 px and the 6 px samples
+    /// (any value from +0.41 to +0.60), so 6 px fills this circle (its deepest pixel is 6.4 px in).
+    const PS_CIRCLE_INSIDE_3: [&str; 17] = [
+        "...................",
+        "......######.......",
+        ".....########......",
+        "....##########.....",
+        "...####....####....",
+        "..####......####...",
+        "..###........###...",
+        "..###........###...",
+        "..###........###...",
+        "..###........###...",
+        "..####......####...",
+        "...####....####....",
+        "....##########.....",
+        ".....########......",
+        "......######.......",
+        "...................",
+        "...................",
+    ];
+
+    /// The selection of a Photoshop sample grid: an Outside stroke's hole, or an Inside stroke's
+    /// ring and hole.
+    fn grid_selection(rows: &[&str], outside: bool) -> Vec<f32> {
         let (w, h) = (rows[0].len(), rows.len());
-        // The selection: the `.` cells enclosed by the ring on each row.
         let mut mask = vec![0.0f32; w * h];
         for (y, row) in rows.iter().enumerate() {
             let b = row.as_bytes();
             if let (Some(first), Some(last)) = (b.iter().position(|c| *c == b'#'), b.iter().rposition(|c| *c == b'#')) {
                 for x in first..=last {
-                    if b[x] == b'.' {
+                    if !outside || b[x] == b'.' {
                         mask[y * w + x] = 1.0;
                     }
                 }
             }
         }
+        mask
+    }
+
+    /// Strokes `mask` as the selection of a `w` × `h` layer and returns its alpha per pixel.
+    fn stroke_alpha(mask: &[f32], w: usize, h: usize, depth: u32, params: Value) -> Vec<f32> {
+        let mut s = Session::new();
+        s.execute("file.new", json!({"width": w, "height": h, "depth": depth})).unwrap();
+        s.execute("layer.new.layer", json!({})).unwrap();
+        s.edit("select", |doc, _| {
+            doc.selection = Some(sel::mask_to_surface(mask, doc.bounds()));
+            Ok(())
+        })
+        .unwrap();
+        s.execute("edit.stroke", params).unwrap();
+        (0..h).flat_map(|y| (0..w).map(move |x| (x, y))).map(|(x, y)| pixel(&s, x as i32, y as i32)[3]).collect()
+    }
+
+    #[test]
+    fn a_hard_circle_strokes_inside_like_photoshop() {
+        let rows = PS_CIRCLE_INSIDE_3;
+        let (w, h) = (rows[0].len(), rows.len());
+        let mask = grid_selection(&rows, false);
+        for depth in [8, 16, 32] {
+            let got = stroke_alpha(&mask, w, h, depth, json!({"width": 3, "color": "#000000", "location": "inside"}));
+            let wrong: Vec<String> = rows
+                .iter()
+                .enumerate()
+                .flat_map(|(y, row)| row.bytes().enumerate().map(move |(x, c)| (x, y, c)))
+                .filter_map(|(x, y, c)| {
+                    let want = if c == b'#' { 1.0 } else { 0.0 };
+                    let a = got[y * w + x];
+                    ((a - want).abs() > 0.004).then(|| format!("({x}, {y}): {a}, Photoshop {want}"))
+                })
+                .collect();
+            assert!(wrong.is_empty(), "{depth}-bit: {} pixels differ from Photoshop: {wrong:?}", wrong.len());
+            // Checked in Photoshop: a 5 px Inside stroke leaves a plus-shaped hole of 12 pixels in
+            // the middle (rows 2, 4, 4, 2 wide), and 6 px fills the whole circle.
+            let hole = [(8, 6), (9, 6), (7, 7), (8, 7), (9, 7), (10, 7), (7, 8), (8, 8), (9, 8), (10, 8), (8, 9), (9, 9)];
+            let five = stroke_alpha(&mask, w, h, depth, json!({"width": 5, "color": "#000000", "location": "inside"}));
+            for (i, m) in mask.iter().enumerate() {
+                let stroked = *m > 0.0 && !hole.contains(&(i % w, i / w));
+                assert_eq!(five[i] > 0.996, stroked, "{depth}-bit 5 px Inside at ({}, {})", i % w, i / w);
+            }
+            let full = stroke_alpha(&mask, w, h, depth, json!({"width": 6, "color": "#000000", "location": "inside"}));
+            for (i, m) in mask.iter().enumerate() {
+                assert_eq!(full[i] > 0.996, *m > 0.0, "{depth}-bit 6 px Inside at ({}, {})", i % w, i / w);
+            }
+        }
+    }
+
+    #[test]
+    fn a_hard_circle_strokes_like_photoshop() {
+        let rows = PS_CIRCLE_OUTSIDE_6;
+        let (w, h) = (rows[0].len(), rows.len());
+        // The selection: the `.` cells enclosed by the ring on each row.
+        let mask = grid_selection(&rows, true);
         for depth in [8, 16, 32] {
             let mut s = Session::new();
             s.execute("file.new", json!({"width": w, "height": h, "depth": depth})).unwrap();
