@@ -1102,9 +1102,10 @@ fn gpu_budget(app: &mut PhotocraftApp, gpu: &crate::gpu_canvas::GpuCanvas, idx: 
     app.perf.gpu_budget_allowance = allowance;
 }
 
-/// Live preview for an open filter dialog: run the filter on the proxy and upload it. Heavy
-/// commands compute on one background worker (`filter_preview_worker`); everything else keeps
-/// the deterministic inline path (#1676), which also lets headless/CPU tests inspect previews
+/// Live preview for an open filter dialog: run the filter on the proxy and upload it. With
+/// background jobs (the desktop app) it computes on one background worker
+/// (`filter_preview_worker`); otherwise (web, tests, `PHOTOCRAFT_INLINE_JOBS`) it keeps the
+/// deterministic inline path (#1676), which also lets headless/CPU tests inspect previews
 /// without a GPU texture.
 fn ensure_filter_preview(app: &mut PhotocraftApp, idx: usize, ctx: &egui::Context) -> Option<(u32, u64, [u32; 2])> {
     // Command dialogs always edit the active document. Never show their preview in another tab.
@@ -1132,8 +1133,12 @@ fn ensure_filter_preview(app: &mut PhotocraftApp, idx: usize, ctx: &egui::Contex
         k: crate::proxy::preview_factor(&st.doc, crate::proxy::reduced_previews(app)),
     };
     let key = request.doc.0 ^ (1u64 << 61);
+    // Every filter's preview computes off the UI thread in the desktop app: Gaussian Blur at
+    // 1000 px takes long enough to freeze the window, and a newer slider value cancels a
+    // preview still running for an older one.
     #[cfg(not(target_arch = "wasm32"))]
-    if app.background_jobs && request.command == "image.mode.indexedColor" {
+    if app.background_jobs {
+        app.filter_preview_worker.supersede(&request);
         if let Some((finished, computed)) = app.filter_preview_worker.poll()
             && finished == request
         {
@@ -1149,9 +1154,9 @@ fn ensure_filter_preview(app: &mut PhotocraftApp, idx: usize, ctx: &egui::Contex
         if !fresh && !app.filter_preview_worker.busy() {
             let doc = app.session.documents().get(idx)?.doc.clone();
             let task = request.clone();
-            if let Err(error) = app.filter_preview_worker.start(request.clone(), ctx.clone(), move || {
+            if let Err(error) = app.filter_preview_worker.start(request.clone(), ctx.clone(), move |cancel| {
                 let t0 = crate::gpu_canvas::now_ms();
-                let result = crate::filter_dialog::preview_document(&doc, task.active, &task.command, &task.params, task.k).map(|doc| {
+                let result = crate::filter_dialog::preview_document_with(&doc, task.active, &task.command, &task.params, task.k, Some(cancel)).map(|doc| {
                     let buffer = photocraft_compose::flatten(&doc);
                     (std::sync::Arc::new(doc), buffer)
                 });
@@ -3876,6 +3881,62 @@ mod tabs_tests;
 mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn every_filter_previews_off_the_ui_thread_and_a_newer_value_cancels_the_old() {
+        // Dragging Gaussian Blur's radius to 1000 px froze the window: the preview ran inline in
+        // the frame, and every slider step waited for the previous blur to finish.
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        app.run("file.new", json!({"width": 64, "height": 48})).unwrap();
+        app.background_jobs = true;
+        crate::filter_dialog::open(&mut app, "filter.blur.gaussianBlur").unwrap();
+        let ctx = egui::Context::default();
+        let wait_for = |app: &mut PhotocraftApp, radius: f64| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while app.filter_preview.as_ref().is_none_or(|p| p.key.params["radius"].as_f64() != Some(radius)) {
+                assert!(std::time::Instant::now() < deadline, "no preview for radius {radius}");
+                ensure_filter_preview(app, 0, &ctx);
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        };
+        // The first frame hands the blur to the worker and returns.
+        assert!(ensure_filter_preview(&mut app, 0, &ctx).is_none());
+        assert!(app.filter_preview_worker.busy(), "the preview computes on the worker");
+        let first = app.ui.dialogs[0].fields["radius"].as_f64().unwrap();
+        wait_for(&mut app, first);
+        assert!(app.filter_preview.as_ref().unwrap().result.is_some());
+
+        // A preview for old values occupies the worker until it is cancelled.
+        let st = app.session.active().unwrap();
+        let d = &app.ui.dialogs[0];
+        let stale = crate::filter_dialog::FilterPreviewKey {
+            doc: st.doc.id,
+            revision: st.revision,
+            dialog: d.id,
+            active: st.active_layer,
+            command: "filter.blur.gaussianBlur".into(),
+            params: json!({"radius": 999.0}),
+            k: 1,
+        };
+        let (told, cancelled) = std::sync::mpsc::channel();
+        app.filter_preview_worker
+            .start(stale, ctx.clone(), move |job| {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                while !job.cancelled() && std::time::Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                let _ = told.send(job.cancelled());
+                crate::filter_preview_worker::Computed { result: None, ms: 0.0 }
+            })
+            .unwrap();
+        // The slider moves on: the next frame cancels the stale preview instead of waiting it out.
+        app.ui.dialogs[0].fields.insert("radius".into(), json!(12.0));
+        ensure_filter_preview(&mut app, 0, &ctx);
+        assert_eq!(cancelled.recv_timeout(std::time::Duration::from_secs(5)), Ok(true), "the stale preview was cancelled");
+        wait_for(&mut app, 12.0);
+        assert!(app.filter_preview.as_ref().unwrap().result.is_some());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn indexed_preview_discards_a_finished_job_after_slider_change_or_reopening() {
         for reopen in [false, true] {
             let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
@@ -3896,7 +3957,7 @@ mod tests {
             let (release, wait) = std::sync::mpsc::channel();
             let ctx = egui::Context::default();
             app.filter_preview_worker
-                .start(old.clone(), ctx.clone(), move || {
+                .start(old.clone(), ctx.clone(), move |_| {
                     wait.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
                     crate::filter_preview_worker::Computed { result: None, ms: 0.0 }
                 })

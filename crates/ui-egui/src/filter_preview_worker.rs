@@ -1,7 +1,11 @@
 //! One native preview at a time. The canvas submits the current request again after an old
-//! job finishes, so slider drags cannot queue copies of every intermediate document.
+//! job finishes, so slider drags cannot queue copies of every intermediate document; a preview
+//! whose request is no longer the dialog's is cancelled ([`Worker::supersede`]) so a slow one
+//! (Gaussian Blur at 1000 px) doesn't hold up the latest.
 
 use std::sync::mpsc::{Receiver, TryRecvError};
+
+use photocraft_engine::jobs::JobCtx;
 
 use crate::filter_dialog::FilterPreviewKey;
 
@@ -12,7 +16,7 @@ pub(crate) struct Computed {
 
 #[derive(Default)]
 pub(crate) struct Worker {
-    running: Option<(FilterPreviewKey, Receiver<Result<Computed, String>>)>,
+    running: Option<(FilterPreviewKey, Receiver<Result<Computed, String>>, JobCtx)>,
 }
 
 impl Worker {
@@ -21,42 +25,56 @@ impl Worker {
     }
 
     /// Never wait for a previous computation and never spawn a second concurrent preview.
-    pub fn start(&mut self, key: FilterPreviewKey, ctx: egui::Context, compute: impl FnOnce() -> Computed + Send + 'static) -> Result<bool, String> {
+    /// `compute` gets the preview's cancellation context ([`Worker::supersede`]).
+    pub fn start(&mut self, key: FilterPreviewKey, ctx: egui::Context, compute: impl FnOnce(&JobCtx) -> Computed + Send + 'static) -> Result<bool, String> {
         if self.busy() {
             return Ok(false);
         }
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let job = JobCtx::new();
+        let work = job.clone();
         std::thread::Builder::new()
-            .name("indexed-color-preview".into())
+            .name("filter-preview".into())
             .spawn(move || {
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(compute)).map_err(|_| "Filter preview failed".to_string());
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute(&work))).map_err(|_| "Filter preview failed".to_string());
                 let _ = tx.send(result);
                 ctx.request_repaint();
             })
             .map_err(|e| format!("Could not start filter preview: {e}"))?;
-        self.running = Some((key, rx));
+        self.running = Some((key, rx, job));
         Ok(true)
     }
 
+    /// The dialog now wants `latest`: cancel a running preview for anything else, so it stops at
+    /// its next check and the latest request can start (its result is discarded by the caller).
+    pub fn supersede(&self, latest: &FilterPreviewKey) {
+        if let Some((key, _, job)) = &self.running
+            && key != latest
+        {
+            job.cancel();
+        }
+    }
+
     pub fn poll(&mut self) -> Option<(FilterPreviewKey, Result<Computed, String>)> {
-        let (_, rx) = self.running.as_ref()?;
+        let (_, rx, _) = self.running.as_ref()?;
         let result = match rx.try_recv() {
             Ok(result) => result,
             Err(TryRecvError::Empty) => return None,
             Err(TryRecvError::Disconnected) => Err("Filter preview worker disconnected".to_string()),
         };
-        let (key, _) = self.running.take()?;
+        let (key, _, _) = self.running.take()?;
         Some((key, result))
     }
 }
 
-/// Release results from closed dialogs even when their canvas is no longer being drawn.
+/// Stop and release previews of closed dialogs even when their canvas is no longer being drawn.
 pub(crate) fn discard_closed(app: &mut crate::PhotocraftApp) {
-    let visible = app.ui.dialogs.iter().any(|d| {
-        d.fields.get("__command").and_then(serde_json::Value::as_str) == Some("image.mode.indexedColor")
-            && d.fields.get("__preview").and_then(serde_json::Value::as_bool) == Some(true)
-    });
+    let visible =
+        app.ui.dialogs.iter().any(|d| d.fields.contains_key("__filter") && d.fields.get("__preview").and_then(serde_json::Value::as_bool) == Some(true));
     if !visible {
+        if let Some((_, _, job)) = &app.filter_preview_worker.running {
+            job.cancel();
+        }
         let _ = app.filter_preview_worker.poll();
     }
 }
@@ -96,7 +114,7 @@ mod tests {
         let (release, wait) = std::sync::mpsc::channel();
         assert!(
             worker
-                .start(key(1, 0, 8), ctx.clone(), move || {
+                .start(key(1, 0, 8), ctx.clone(), move |_| {
                     wait.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
                     Computed { result: None, ms: 0.0 }
                 })
@@ -109,14 +127,14 @@ mod tests {
             .textures_delta
             .clear();
             assert!(worker.poll().is_none());
-            assert!(!worker.start(key(1, 0, colors), ctx.clone(), || panic!("queued an intermediate request")).unwrap());
+            assert!(!worker.start(key(1, 0, colors), ctx.clone(), |_| panic!("queued an intermediate request")).unwrap());
         }
         release.send(()).unwrap();
         let (old, result) = finish(&mut worker);
         assert!(result.is_ok());
         let latest = key(1, 0, 256);
         assert_ne!(old, latest); // The canvas must discard this result before uploading.
-        assert!(worker.start(latest.clone(), ctx, || Computed { result: None, ms: 1.0 }).unwrap());
+        assert!(worker.start(latest.clone(), ctx, |_| Computed { result: None, ms: 1.0 }).unwrap());
         assert_eq!(finish(&mut worker).0, latest);
     }
 
@@ -134,10 +152,10 @@ mod tests {
     #[test]
     fn escaped_panic_is_an_error_and_worker_can_be_reused() {
         let mut worker = Worker::default();
-        worker.start(key(1, 0, 64), Default::default(), || panic!("synthetic preview failure")).unwrap();
+        worker.start(key(1, 0, 64), Default::default(), |_| panic!("synthetic preview failure")).unwrap();
         assert!(finish(&mut worker).1.is_err());
         assert!(!worker.busy());
-        worker.start(key(1, 0, 128), Default::default(), || Computed { result: None, ms: 0.0 }).unwrap();
+        worker.start(key(1, 0, 128), Default::default(), |_| Computed { result: None, ms: 0.0 }).unwrap();
         assert!(finish(&mut worker).1.is_ok());
     }
 }
