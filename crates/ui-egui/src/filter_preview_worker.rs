@@ -1,7 +1,8 @@
 //! One native preview at a time. The canvas submits the current request again after an old
-//! job finishes, so slider drags cannot queue copies of every intermediate document; a preview
-//! whose request is no longer the dialog's is cancelled ([`Worker::supersede`]) so a slow one
-//! (Gaussian Blur at 1000 px) doesn't hold up the latest.
+//! job finishes, so slider drags cannot queue copies of every intermediate document. While a
+//! slider moves, the running preview finishes, so the canvas keeps updating during the drag;
+//! once the dialog's values have settled, a preview still running for older ones is cancelled
+//! ([`Worker::supersede`]) so a slow one (Gaussian Blur at 1000 px) doesn't hold up the last.
 
 use std::sync::mpsc::{Receiver, TryRecvError};
 
@@ -14,9 +15,23 @@ pub(crate) struct Computed {
     pub ms: f64,
 }
 
+/// How long the dialog's values must stay unchanged before a stale preview is cancelled. Shorter
+/// than a pause in a drag is long; cancelling on every slider step meant no preview finished
+/// until the slider stopped.
+pub(crate) const SETTLE_MS: f64 = 150.0;
+
+/// The preview being computed: its request, its result channel and its cancellation.
+struct Running {
+    key: FilterPreviewKey,
+    rx: Receiver<Result<Computed, String>>,
+    job: JobCtx,
+}
+
 #[derive(Default)]
 pub(crate) struct Worker {
-    running: Option<(FilterPreviewKey, Receiver<Result<Computed, String>>, JobCtx)>,
+    running: Option<Running>,
+    /// The dialog's latest request and when it was first seen (ms).
+    latest: Option<(FilterPreviewKey, f64)>,
 }
 
 impl Worker {
@@ -41,28 +56,39 @@ impl Worker {
                 ctx.request_repaint();
             })
             .map_err(|e| format!("Could not start filter preview: {e}"))?;
-        self.running = Some((key, rx, job));
+        self.running = Some(Running { key, rx, job });
         Ok(true)
     }
 
-    /// The dialog now wants `latest`: cancel a running preview for anything else, so it stops at
-    /// its next check and the latest request can start (its result is discarded by the caller).
-    pub fn supersede(&self, latest: &FilterPreviewKey) {
-        if let Some((key, _, job)) = &self.running
-            && key != latest
+    /// The dialog wants `latest` at time `now_ms`. Once that request has been unchanged for
+    /// [`SETTLE_MS`], a running preview for anything else is cancelled, so it stops at its next
+    /// check and the latest can start (the caller discards its result). While the request keeps
+    /// changing (a slider drag) the running preview is left to finish and be shown.
+    pub fn supersede(&mut self, latest: &FilterPreviewKey, now_ms: f64) {
+        let since = match &self.latest {
+            Some((key, t)) if key == latest => *t,
+            _ => {
+                self.latest = Some((latest.clone(), now_ms));
+                now_ms
+            }
+        };
+        if now_ms - since < SETTLE_MS {
+            return;
+        }
+        if let Some(r) = &self.running
+            && &r.key != latest
         {
-            job.cancel();
+            r.job.cancel();
         }
     }
 
     pub fn poll(&mut self) -> Option<(FilterPreviewKey, Result<Computed, String>)> {
-        let (_, rx, _) = self.running.as_ref()?;
-        let result = match rx.try_recv() {
+        let result = match self.running.as_ref()?.rx.try_recv() {
             Ok(result) => result,
             Err(TryRecvError::Empty) => return None,
             Err(TryRecvError::Disconnected) => Err("Filter preview worker disconnected".to_string()),
         };
-        let (key, _, _) = self.running.take()?;
+        let key = self.running.take()?.key;
         Some((key, result))
     }
 }
@@ -72,8 +98,8 @@ pub(crate) fn discard_closed(app: &mut crate::PhotocraftApp) {
     let visible =
         app.ui.dialogs.iter().any(|d| d.fields.contains_key("__filter") && d.fields.get("__preview").and_then(serde_json::Value::as_bool) == Some(true));
     if !visible {
-        if let Some((_, _, job)) = &app.filter_preview_worker.running {
-            job.cancel();
+        if let Some(r) = &app.filter_preview_worker.running {
+            r.job.cancel();
         }
         let _ = app.filter_preview_worker.poll();
     }
@@ -157,5 +183,47 @@ mod tests {
         assert!(!worker.busy());
         worker.start(key(1, 0, 128), Default::default(), |_| Computed { result: None, ms: 0.0 }).unwrap();
         assert!(finish(&mut worker).1.is_ok());
+    }
+
+    #[test]
+    fn a_stale_preview_is_cancelled_only_once_the_values_settle() {
+        // Cancelling on every slider step meant no preview finished until the slider stopped.
+        let mut worker = Worker::default();
+        let (send_job, job) = std::sync::mpsc::channel();
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        worker
+            .start(key(1, 0, 8), Default::default(), move |ctx| {
+                send_job.send(ctx.clone()).unwrap();
+                let _ = wait.recv_timeout(std::time::Duration::from_secs(5));
+                Computed { result: None, ms: 0.0 }
+            })
+            .unwrap();
+        let job = job.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        // A drag: a new value every frame, never settled; the running preview is left to finish.
+        for (i, colors) in [16, 32, 64, 128].into_iter().enumerate() {
+            worker.supersede(&key(1, 0, colors), 1000.0 + i as f64 * 16.0);
+            assert!(!job.cancelled(), "cancelled mid-drag at {colors}");
+        }
+        // The same request for less than the settle time: still running.
+        worker.supersede(&key(1, 0, 128), 1048.0 + SETTLE_MS - 1.0);
+        assert!(!job.cancelled());
+        // Settled: the stale preview is cancelled.
+        worker.supersede(&key(1, 0, 128), 1048.0 + SETTLE_MS);
+        assert!(job.cancelled());
+        release.send(()).unwrap();
+        let (finished, _) = finish(&mut worker);
+        assert_eq!(finished, key(1, 0, 8));
+        // A running preview for the settled request itself is never cancelled.
+        let (send_job, job) = std::sync::mpsc::channel();
+        worker
+            .start(key(1, 0, 128), Default::default(), move |ctx| {
+                send_job.send(ctx.clone()).unwrap();
+                Computed { result: None, ms: 0.0 }
+            })
+            .unwrap();
+        let job = job.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        worker.supersede(&key(1, 0, 128), 99_999.0);
+        assert!(!job.cancelled());
+        let _ = finish(&mut worker);
     }
 }

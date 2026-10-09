@@ -1134,11 +1134,11 @@ fn ensure_filter_preview(app: &mut PhotocraftApp, idx: usize, ctx: &egui::Contex
     };
     let key = request.doc.0 ^ (1u64 << 61);
     // Every filter's preview computes off the UI thread in the desktop app: Gaussian Blur at
-    // 1000 px takes long enough to freeze the window, and a newer slider value cancels a
-    // preview still running for an older one.
+    // 1000 px takes long enough to freeze the window. Once the slider settles, a preview still
+    // running for an older value is cancelled.
     #[cfg(not(target_arch = "wasm32"))]
     if app.background_jobs {
-        app.filter_preview_worker.supersede(&request);
+        app.filter_preview_worker.supersede(&request, crate::gpu_canvas::now_ms());
         if let Some((finished, computed)) = app.filter_preview_worker.poll()
             && finished == request
         {
@@ -3927,10 +3927,19 @@ mod tests {
                 crate::filter_preview_worker::Computed { result: None, ms: 0.0 }
             })
             .unwrap();
-        // The slider moves on: the next frame cancels the stale preview instead of waiting it out.
+        // The slider moves on and stops: once the value settles, the stale preview is cancelled
+        // instead of being waited out.
         app.ui.dialogs[0].fields.insert("radius".into(), json!(12.0));
-        ensure_filter_preview(&mut app, 0, &ctx);
-        assert_eq!(cancelled.recv_timeout(std::time::Duration::from_secs(5)), Ok(true), "the stale preview was cancelled");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let was_cancelled = loop {
+            ensure_filter_preview(&mut app, 0, &ctx);
+            if let Ok(c) = cancelled.try_recv() {
+                break c;
+            }
+            assert!(std::time::Instant::now() < deadline, "the stale preview was never cancelled");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        assert!(was_cancelled, "the stale preview stopped because it was cancelled, not by timing out");
         wait_for(&mut app, 12.0);
         assert!(app.filter_preview.as_ref().unwrap().result.is_some());
     }
