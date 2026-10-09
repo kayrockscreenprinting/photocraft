@@ -1519,6 +1519,30 @@ impl PhotocraftApp {
     }
 }
 
+/// The New Document dialog's key in the preferences' `dialogs` map.
+const NEW_DOCUMENT: &str = "file.new";
+
+/// New Document fields its OK remembers (#1810): the size, resolution, mode, depth, background and
+/// display units. Not the name, the preset or the clipboard size.
+const NEW_DOCUMENT_REMEMBERED: [&str; 8] = ["width", "height", "resolution", "mode", "depth", "background", "__unit", "__resUnit"];
+
+/// A remembered value the dialog can show (a corrupt preference is ignored).
+fn remembered_new_document_value(key: &str, v: &serde_json::Value) -> bool {
+    match key {
+        "width" | "height" => v.as_u64().is_some_and(|n| (1..=300_000).contains(&n)),
+        "resolution" => v.as_f64().is_some_and(|r| r.is_finite() && r > 0.0 && r <= 30_000.0),
+        "depth" => v.as_u64().is_some_and(|d| matches!(d, 1 | 8 | 16 | 32)),
+        _ => v.as_str().is_some_and(|s| !s.is_empty() && s.len() <= 64),
+    }
+}
+
+/// Remember the New Document fields `f` its OK used, for the next New Document.
+pub(crate) fn remember_new_document(app: &mut PhotocraftApp, f: &serde_json::Map<String, serde_json::Value>) {
+    let kept: serde_json::Map<String, serde_json::Value> =
+        NEW_DOCUMENT_REMEMBERED.iter().filter_map(|k| f.get(*k).filter(|v| remembered_new_document_value(k, v)).map(|v| (k.to_string(), v.clone()))).collect();
+    app.session.prefs.edit(|p| p.dialogs.insert(NEW_DOCUMENT.into(), serde_json::Value::Object(kept)));
+}
+
 fn clip_signature(w: u32, h: u32, px: &[u8]) -> u64 {
     let mut sig = (w as u64) << 32 | h as u64;
     for b in px.iter().step_by(997) {
@@ -1543,11 +1567,19 @@ impl PhotocraftApp {
         }
     }
 
-    /// File › New's fields: the defaults, plus the Clipboard preset (the clipboard image's size,
-    /// selected) when the clipboard holds an image. Opening the dialog is an explicit request, so
-    /// the OS clipboard is read here, as for a paste.
+    /// File › New's fields: the defaults, then the settings of the last document made with the
+    /// dialog (Photoshop starts from them, #1810), then the Clipboard preset (the clipboard image's
+    /// size, selected) when the clipboard holds an image. Opening the dialog is an explicit
+    /// request, so the OS clipboard is read here, as for a paste.
     pub(crate) fn new_document_fields(&mut self) -> serde_json::Map<String, serde_json::Value> {
         let mut f = crate::state::UiState::new_document_fields();
+        if let Some(serde_json::Value::Object(saved)) = self.session.prefs().dialogs.get(NEW_DOCUMENT) {
+            for k in NEW_DOCUMENT_REMEMBERED {
+                if let Some(v) = saved.get(k).filter(|v| remembered_new_document_value(k, v)) {
+                    f.insert(k.into(), v.clone());
+                }
+            }
+        }
         self.import_os_clipboard();
         if let Some(c) = self.session.clipboard.as_ref().filter(|c| !c.bounds.is_empty()) {
             crate::new_doc_ui::set_clipboard(&mut f, c.bounds.width(), c.bounds.height());
@@ -1589,6 +1621,9 @@ mod transform_undo_tests;
 
 #[cfg(test)]
 mod move_auto_select_tests;
+
+#[cfg(test)]
+mod new_doc_remember_tests;
 
 #[cfg(test)]
 mod hidden_layer_tests;

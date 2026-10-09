@@ -339,6 +339,9 @@ pub fn confirm(app: &mut PhotocraftApp, id: u64) -> Result<Value, String> {
             if let Some(i) = app.session.active_index() {
                 app.ui.views[i].fit_pending = true;
             }
+            if r.is_ok() {
+                crate::remember_new_document(app, &d.fields);
+            }
             r
         }
         DialogKind::Command if crate::fill_ui::owns(&d.fields) => crate::fill_ui::confirm(app, &d.fields),
