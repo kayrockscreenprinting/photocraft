@@ -314,6 +314,12 @@ impl<'a> Tiff<'a> {
 }
 
 /// A human-readable listing of every IFD and entry (debugging aid).
+/// The EXIF orientation (1..=8) of a raw tag value; anything else is the default 1. The range is
+/// checked on the `u32`: narrowing first let a LONG like 65538 pass as 2 (#1817).
+pub(crate) fn orientation(v: Option<u32>) -> u16 {
+    v.filter(|o| (1..=8).contains(o)).and_then(|o| u16::try_from(o).ok()).unwrap_or(1)
+}
+
 pub(crate) fn dump(data: &[u8]) -> String {
     use std::fmt::Write;
     let Some(t) = Tiff::new(data) else { return "not a TIFF-structured file".into() };
@@ -337,6 +343,17 @@ pub(crate) fn dump(data: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn orientation_is_range_checked_before_narrowing() {
+        // #1817: 65538 as u16 is 2, which passed the 1..=8 check.
+        for (v, want) in [(None, 1), (Some(0), 1), (Some(9), 1), (Some(65_538), 1), (Some(65_537), 1), (Some(u32::MAX), 1)] {
+            assert_eq!(orientation(v), want, "{v:?}");
+        }
+        for o in 1..=8u32 {
+            assert_eq!(orientation(Some(o)), o as u16);
+        }
+    }
 
     #[test]
     fn header_variants() {
