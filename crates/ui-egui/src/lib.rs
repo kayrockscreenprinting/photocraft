@@ -125,6 +125,7 @@ pub mod rulers;
 pub mod screen_picker;
 pub mod scrollbars;
 pub mod served_fonts;
+pub mod shape_dialog;
 pub mod shortcut_dispatch;
 pub mod shortcuts;
 mod sizing;
