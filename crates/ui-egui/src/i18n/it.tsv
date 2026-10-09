@@ -17,6 +17,8 @@
 	Layer	Livello
 	Type	Testo
 	Select	Selezione
+	Selected	Selezionati
+	Scope	Ambito
 	Top Left	In alto a sinistra
 	Top Right	In alto a destra
 	Bottom Left	In basso a sinistra
@@ -752,7 +754,7 @@
 	All Caps	Tutto maiuscolo
 	All Slices	Tutte le sezioni
 	All User Slices	Tutte le sezioni utente
-	All shortcuts reset to Photoshop defaults.	Tutte le scorciatoie ripristinate ai default di Photoshop.
+	All shortcuts reset to PhotoCraft defaults.	Tutte le scorciatoie ripristinate ai default di PhotoCraft.
 	Alt	Alt
 	Always use pressure for opacity	Usa sempre pressione per opacità
 	Always use pressure for size	Usa sempre pressione per dimensione
@@ -1074,7 +1076,7 @@
 	Ignore All	Ignora tutto
 	Image Size	Dimensione immagine
 	Import Brushes…	Importa pennelli…
-	Import Photoshop brushes (.abr)	Importa pennelli Photoshop (.abr)
+	Import brushes (.abr)	Importa pennelli (.abr)
 	Import Presets	Importa predefiniti
 	Imported	Importato
 	Indent First	Rientro primo
@@ -1124,7 +1126,6 @@
 	Liquify is not open	Fluidifica non è aperto
 	Load	Carica
 	Load 3D LUT…	Carica LUT 3D…
-	Load Photoshop brushes (.abr)	Carica pennelli Photoshop (.abr)
 	Load channel as selection	Carica canale come selezione
 	Load…	Carica…
 	Localized Color Clusters	Cluster colore localizzati
@@ -1391,6 +1392,8 @@
 	Stroke	Traccia
 	Stroke Catch-up	Recupero traccia
 	Stroke:	Traccia:
+	Location	Posizione
+	Location:	Posizione:
 	Style	Stile
 	Style Options	Opzioni stile
 	Style Options…	Opzioni stile…
@@ -1517,7 +1520,7 @@
 	Current Tool	Strumento corrente
 	Custom Shape Tool	Strumento Forma personale
 	Cyans	Ciano
-	Default Photoshop Size	Dimensione predefinita Photoshop
+	Default PhotoCraft Size	Dimensione predefinita PhotoCraft
 	Delete Workspace	Elimina area di lavoro
 	Diamond	Diamante
 	Dimensions:	Dimensioni:
@@ -2093,7 +2096,7 @@
 	Pixel	Pixel
 	Adjustment	Regolazione
 	Drag (lasso) or click points (polygonal) · {add} add · {sub} subtract	Trascina (lazo) o clic su punti (poligonale) · {add} aggiungi · {sub} sottrai
-	Drag a crop box · drag inside to move · edges resize ({ratio} ratio, {centre} centre) · Space moves while drawing · {commit} commits · Esc cancels	Trascina un riquadro ritaglio · trascina dentro per spostare · bordi ridimensionano ({ratio} proporzione, {centre} centro) · Spazio sposta durante disegno · {commit} conferma · Esc annulla
+	Drag a crop box · drag inside to move · edges resize ({ratio} ratio, {centre} centre) · Space moves while drawing · arrows nudge · X swaps orientation · {commit} commits · Esc cancels	Trascina un riquadro ritaglio · trascina dentro per spostare · bordi ridimensionano ({ratio} proporzione, {centre} centro) · Spazio sposta durante disegno · frecce spostano · X scambia orientamento · {commit} conferma · Esc annulla
 	{mode} Color · {bits} bit	Colore {mode} · {bits} bit
 	Scrubby Zoom	Zoom scrubby
 	Auto Erase	Cancellazione automatica
@@ -2251,6 +2254,10 @@ cameraRaw	Amount	Quantità
 
 # Shared screen eyedropper and text Color Picker (#1128).
 	Color Picker (Text Color)	Selettore colore (Colore del testo)
+	Color Picker (Fill Color)	Selettore colore (Colore di riempimento)
+	Fill color	Colore di riempimento
+	Color Picker (Stroke Color)	Selettore colore (Colore della traccia)
+	Stroke color	Colore della traccia
 	Pick screen color	Scegli colore dallo schermo
 	Sample a pixel anywhere on the screen	Campiona un pixel in qualsiasi punto dello schermo
 	Click to pick · Esc to cancel	Clic per scegliere · Esc per annullare
@@ -2320,6 +2327,11 @@ fontWeight	Italic	Corsivo
 	Reset View	Reimposta vista
 	Drag around the centre to rotate the view  ·  Shift constrains to 15°	Trascina intorno al centro per ruotare la vista  ·  Maiusc vincola a 15°
 
+# Painting symmetry presets.
+	Dual Axis	Doppio asse
+	Diagonal	Diagonale
+	Transform Symmetry	Trasforma simmetria
+
 # Eyedropper Sample Size and Sample (#1649).
 	Point Sample	Campione puntiforme
 	3 by 3 Average	Media 3 × 3
@@ -2339,3 +2351,22 @@ fontWeight	Italic	Corsivo
 	Color to Alpha…	Colore ad alfa…
 	Transparency Threshold	Soglia di trasparenza
 	Opacity Threshold	Soglia di opacità
+	Rule of Thirds	Regola dei terzi
+	Triangle	Triangolo
+	Golden Ratio	Sezione aurea
+	Golden Spiral	Spirale aurea
+	Auto Show Overlay	Mostra sovrapposizione automaticamente
+	Always Show Overlay	Mostra sempre sovrapposizione
+	Never Show Overlay	Non mostrare mai sovrapposizione
+	Cycle Overlay	Cambia sovrapposizione
+	Cycle Orientation	Cambia orientamento
+	Set the overlay options for the Crop tool	Imposta le opzioni di sovrapposizione dello strumento Taglierina
+	Alt-click went to the desktop, which moves windows with Alt-drag. Set its window-move key to Super, or latch Alt in Window › Modifier Keys.	L’Alt-click è andato al desktop, che sposta le finestre con Alt-trascina. Imposta il suo tasto per spostare le finestre su Super, oppure blocca Alt in Finestra › Tasti modificatori.
+	Straighten the image by drawing a line on it	Raddrizza l’immagine tracciando una linea
+	Set additional Crop options	Imposta opzioni di ritaglio aggiuntive
+	Show Cropped Area	Mostra area ritagliata
+	Enable Crop Shield	Attiva schermo di ritaglio
+	Match Canvas	Come la tela
+	Auto Adjust Opacity	Regola automaticamente opacità
+	Crop Shield color	Colore dello schermo di ritaglio
+	Color Picker (Crop Shield Color)	Selettore colore (Colore dello schermo di ritaglio)

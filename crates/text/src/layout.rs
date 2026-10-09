@@ -418,7 +418,9 @@ impl Layouter {
         // Resolve families (PostScript names from PSDs, unknown families).
         for r in &runs {
             let mut s = r.style.clone();
-            if let Some(ps) = s.postscript_name.clone() {
+            if let Some(ps) = s.postscript_name.clone()
+                && !fonts.faces(&s.font_family).iter().any(|f| f.postscript_name.as_deref() == Some(&ps))
+            {
                 let f = fonts.resolve_postscript(&ps);
                 // An exact face match wins; a guessed family only fills a missing family.
                 if f.exact || (!fonts.has_family(&s.font_family) && fonts.has_family(&f.family)) {
@@ -427,6 +429,11 @@ impl Layouter {
                     s.italic = f.italic;
                 }
             }
+            // Drawn with a fallback for now; a host that serves this family fetches it (`served`).
+            if !fonts.has_family(&s.font_family) {
+                crate::served::request(&s.font_family);
+            }
+            fonts.select_named_face(&mut s);
             out.styles.push(s);
         }
         let run_starts: Vec<usize> = runs
@@ -486,6 +493,13 @@ impl Layouter {
                 // it as a newline, which has the same length, so text offsets don't move.
                 if ch == FORCED_LINE_BREAK {
                     ptext.push('\n');
+                    continue;
+                }
+                // Imported PSD text can contain literal tab controls. Font shaping may
+                // render those as .notdef boxes; a space preserves the one-byte source
+                // and style/caret offsets while supplying a real whitespace advance.
+                if ch == '\t' {
+                    ptext.push(' ');
                     continue;
                 }
                 let style = &out.styles[style_at(prange.start + i)];

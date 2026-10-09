@@ -15,6 +15,8 @@ testgen = []
 corpus = []
 
 [dependencies]
+# Adobe DNG compression 8: zlib (RFC 1950) with the TIFF predictor (pure-Rust backend).
+flate2 = { workspace = true }
 
 # Parallel bands on native; wasm builds stay single-threaded.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

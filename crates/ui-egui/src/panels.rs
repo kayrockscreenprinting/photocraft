@@ -147,6 +147,12 @@ pub fn toolbar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                             if resp.clicked() && ui.data(|d| d.get_temp::<egui::Id>(held_id)) != Some(key) {
                                 app.ui.tool = tool;
                             }
+                            // Double-clicking the Hand tool fits the image on screen (Photoshop).
+                            if resp.double_clicked() && tool == Tool::Hand {
+                                app.ui.tool = tool;
+                                // With no document open there is nothing to fit.
+                                let _ = app.run("view.fitOnScreen", json!({}));
+                            }
                             // Right-click or long-press opens the flyout (Photoshop).
                             let held_for = resp.is_pointer_button_down_on().then(|| ui.input(|i| i.pointer.press_start_time().map(|t0| i.time - t0))).flatten();
                             if slot.len() > 1
@@ -392,10 +398,13 @@ fn color_chips(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
 
 /// The app's top bar: brand mark, menus, the document title and the workspace controls. With
 /// [`PhotocraftApp::custom_titlebar`] (Windows and Linux) it is also the window's title bar, as in
-/// Photoshop on Windows: the caption buttons take its right end (`titlebar`).
+/// Photoshop on Windows: the caption buttons take its right end (`titlebar`). With the system
+/// title bar (Windows and Linux, `system_title_bar`) the OS draws its own icon and title, so the
+/// in-app bar shows menus and workspace controls only: no brand mark, no centred title.
 pub fn title_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let custom = app.custom_titlebar;
+    let system = system_title_bar(app);
     let left = if cfg!(target_os = "macos") && app.integrated_titlebar { 78 } else { 10 };
     let right = if custom { 0 } else { 10 };
     let bar = egui::Panel::top("title_bar")
@@ -422,10 +431,12 @@ pub fn title_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
             // whatever room is left between them, shortened or dropped rather than drawn over them.
             let (mut menus_right, mut controls_left) = (full.left(), full.right());
             ui.horizontal_centered(|ui| {
-                let side = if t.pro { 18.0 } else { 20.0 };
-                let (mark, _) = ui.allocate_exact_size(vec2(side, side), Sense::hover());
-                crate::brand::paint_mark(ui, mark);
-                ui.add_space(6.0);
+                if !system {
+                    let side = if t.pro { 18.0 } else { 20.0 };
+                    let (mark, _) = ui.allocate_exact_size(vec2(side, side), Sense::hover());
+                    crate::brand::paint_mark(ui, mark);
+                    ui.add_space(6.0);
+                }
                 // With the macOS menu bar the menus are at the top of the screen instead.
                 menus_right = if app.services.native_menu.is_some() { ui.cursor().left() } else { crate::menus::menu_bar(app, ui) };
                 // The menu bar takes the whole row, so the right-hand group gets its own rect:
@@ -444,6 +455,8 @@ pub fn title_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                         ("Photography".to_string(), tl!("Photography")),
                         ("Painting".to_string(), tl!("Painting")),
                         ("Graphic and Web".to_string(), tl!("Graphic and Web")),
+                        ("Pixel Art".to_string(), tl!("Pixel Art")),
+                        ("Motion".to_string(), tl!("Motion")),
                     ];
                     // A narrow bar drops what is also in a menu, Discord first (below), then
                     // the theme toggle (Preferences), then search (Edit › Search), and narrows
@@ -487,6 +500,9 @@ pub fn title_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                 };
             });
             ui.ctx().data_mut(|d| d.insert_temp(span_id, (menus_right, controls_left)));
+            if system {
+                return;
+            }
             let font = theme::medium(13.0);
             let galley = ui.painter().layout_no_wrap(title.clone(), font.clone(), t.text_dim);
             if let Some(x) = title_x(full.center().x, menus_right, controls_left, galley.size().x) {
@@ -502,6 +518,32 @@ pub fn title_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         });
     if custom {
         crate::titlebar::caption_buttons(app, ui, bar.response.rect);
+    }
+}
+
+/// Whether the window shows the system's title bar instead of the app drawing its own: Windows
+/// and Linux with Preferences › Interface › System Title Bar. macOS always has system decorations,
+/// but keeps the in-app brand mark and centred title, so it never counts as system mode here; nor
+/// does the web build (the browser tab has no document title), nor an embedder or the snapshot
+/// example that never turned the preference on.
+pub fn system_title_bar(app: &PhotocraftApp) -> bool {
+    !app.custom_titlebar && app.session.prefs().interface.system_title_bar && !cfg!(any(target_os = "macos", target_arch = "wasm32"))
+}
+
+/// The OS window title: the active document's name suffixed with the app name (a `*` prefix
+/// marks unsaved changes, like the `•` in the app-drawn title), or just the app name with no
+/// document open.
+pub fn window_title(app: &PhotocraftApp) -> String {
+    app.session.active().map(|d| format!("{}{} \u{2014} PhotoCraft", if d.is_dirty() { "*" } else { "" }, d.doc.name)).unwrap_or_else(|| "PhotoCraft".into())
+}
+
+/// Keep the OS window title (and the taskbar / Alt-Tab entry) on the active file. Sends
+/// `ViewportCommand::Title` only when the title changed since the last frame.
+pub fn sync_window_title(app: &mut PhotocraftApp, ctx: &egui::Context) {
+    let want = window_title(app);
+    if app.last_window_title != want {
+        app.last_window_title = want.clone();
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(want));
     }
 }
 
@@ -529,7 +571,7 @@ fn title_x(center: f32, menus_right: f32, controls_left: f32, width: f32) -> Opt
 
 #[cfg(test)]
 mod title_tests {
-    use super::title_x;
+    use super::{system_title_bar, title_x, window_title};
 
     #[test]
     fn title_never_overlaps_menus_or_controls() {
@@ -543,6 +585,96 @@ mod title_tests {
         assert_eq!(title_x(400.0, 420.0, 480.0, 60.0), None);
         assert_eq!(title_x(f32::NAN, 420.0, 1300.0, 60.0), Some(436.0));
         assert_eq!(title_x(400.0, f32::INFINITY, 1300.0, 60.0), None);
+    }
+
+    fn app(custom_titlebar: bool) -> crate::PhotocraftApp {
+        let mut app = crate::PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        app.custom_titlebar = custom_titlebar;
+        // The preference that makes the shell launch without its own title bar.
+        app.session.edit_prefs(|p| p.interface.system_title_bar = !custom_titlebar);
+        app
+    }
+
+    #[test]
+    fn without_the_preference_the_mark_stays() {
+        // The default (e.g. the web build or the snapshot example): no custom bar, no preference.
+        let app = crate::PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        assert!(!system_title_bar(&app));
+    }
+
+    fn open_named(app: &mut crate::PhotocraftApp, name: &str) {
+        app.session.add_document(
+            photocraft_doc::Document::new(name, photocraft_doc::Size::new(4, 4), photocraft_doc::ColorMode::Rgb, photocraft_doc::SampleType::U8),
+            None,
+        );
+    }
+
+    #[test]
+    fn window_title_with_no_document_is_the_app_name() {
+        assert_eq!(window_title(&app(true)), "PhotoCraft");
+    }
+
+    #[test]
+    fn window_title_follows_the_active_file() {
+        let mut app = app(true);
+        open_named(&mut app, "foo.psd");
+        assert_eq!(window_title(&app), "foo.psd \u{2014} PhotoCraft");
+        // Unsaved changes gain a `*` prefix, like the `•` in the app-drawn title.
+        if let Some(st) = app.session.active_mut() {
+            st.revision += 1;
+        }
+        assert_eq!(window_title(&app), "*foo.psd \u{2014} PhotoCraft");
+    }
+
+    #[test]
+    fn system_mode_hides_the_mark_and_the_centred_title() {
+        for custom in [true, false] {
+            let mut app = app(custom);
+            open_named(&mut app, "foo.psd");
+            let ctx = egui::Context::default();
+            crate::PhotocraftApp::setup_context(&ctx, crate::theme::ThemeKind::ALL[0]);
+            let out = ctx.run_ui(egui::RawInput::default(), |ui| super::title_bar(&mut app, ui));
+            let mut out = out;
+            out.textures_delta.clear();
+            let mut texts = Vec::new();
+            for shape in &out.shapes {
+                collect_text(&shape.shape, &mut texts);
+            }
+            let system = system_title_bar(&app);
+            assert_eq!(system, !custom && !cfg!(target_os = "macos"));
+            assert_eq!(crate::brand::mark_rect(&ctx).is_some(), !system, "mark in system mode (custom={custom})");
+            assert_eq!(texts.iter().any(|t| t.contains("foo.psd")), !system, "centred title in system mode (custom={custom}): {texts:?}");
+        }
+    }
+
+    fn collect_text(shape: &egui::Shape, out: &mut Vec<String>) {
+        match shape {
+            egui::Shape::Text(t) => out.push(t.galley.text().to_string()),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_text(s, out)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn sync_window_title_sends_only_on_change() {
+        let mut app = app(true);
+        let ctx = egui::Context::default();
+        crate::PhotocraftApp::setup_context(&ctx, crate::theme::ThemeKind::ALL[0]);
+        super::sync_window_title(&mut app, &ctx);
+        assert_eq!(app.last_window_title, "PhotoCraft");
+        let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+        out.textures_delta.clear();
+        let cmds = out.viewport_output.remove(&egui::ViewportId::ROOT).map(|v| v.commands).unwrap_or_default();
+        assert!(cmds.iter().any(|c| matches!(c, egui::ViewportCommand::Title(t) if t == "PhotoCraft")), "{cmds:?}");
+        // Same document state again: the cached title stops a repeat command.
+        super::sync_window_title(&mut app, &ctx);
+        let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+        out.textures_delta.clear();
+        let cmds = out.viewport_output.remove(&egui::ViewportId::ROOT).map(|v| v.commands).unwrap_or_default();
+        assert!(!cmds.iter().any(|c| matches!(c, egui::ViewportCommand::Title(_))), "repeat Title: {cmds:?}");
+        open_named(&mut app, "foo.psd");
+        super::sync_window_title(&mut app, &ctx);
+        assert_eq!(app.last_window_title, "foo.psd \u{2014} PhotoCraft");
     }
 }
 
@@ -623,7 +755,7 @@ pub fn options_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                         if icons::button(ui, "circle-dot", 24.0, b.pressure_size, tl!("Always use pressure for size")).clicked() {
                             b.pressure_size = !b.pressure_size;
                         }
-                        symmetry_menu(app, ui);
+                        crate::symmetry_ui::menu(app, ui);
                     }
                     // Pencil: Photoshop's options (no hardness or flow: the pencil is always hard).
                     Tool::Pencil => {
@@ -858,8 +990,13 @@ pub fn options_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                         if widgets::secondary_button(ui, tl!("Clear"), 0.0).clicked() {
                             o.crop_ratio.clear();
                         }
-                        let _ = icons::button(ui, "grid-3x3", 24.0, true, tl!("Overlay: Rule of Thirds"));
+                        crate::crop_straighten::options_button(&mut app.crop.straighten, ui);
+                        crate::crop_overlay::options_button(o, ui);
+                        let pick_shield_color = crate::crop_shield::options_button(&mut o.crop_shield, ui);
                         widgets::checkbox(ui, &mut o.crop_delete, tl!("Delete Cropped Pixels"));
+                        if pick_shield_color {
+                            crate::crop_shield::pick_custom_color(app);
+                        }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if icons::button(
                                 ui,
@@ -873,7 +1010,7 @@ pub fn options_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                                 crate::canvas::commit_crop(app);
                             }
                             if icons::button(ui, "ban", 26.0, false, tl!("Cancel current crop operation  (Esc)")).clicked() {
-                                app.ui.crop_rect = None;
+                                crate::crop_ui::cancel(app);
                             }
                         });
                     }
@@ -1012,7 +1149,7 @@ pub fn options_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                     Tool::Crop => hint(
                         ui,
                         &crate::i18n::fmt(
-                            tl!("Drag a crop box · drag inside to move · edges resize ({ratio} ratio, {centre} centre) · Space moves while drawing · {commit} commits · Esc cancels"),
+                            tl!("Drag a crop box · drag inside to move · edges resize ({ratio} ratio, {centre} centre) · Space moves while drawing · arrows nudge · X swaps orientation · {commit} commits · Esc cancels"),
                             &[
                                 ("ratio", &crate::shortcuts::pretty("Shift")),
                                 ("centre", &crate::shortcuts::pretty("Alt")),
@@ -1338,8 +1475,9 @@ fn navigator(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     // Visible-area rectangle.
     let v = app.ui.views[idx].clone();
     let canvas = app.last_canvas_rect;
-    let vw = canvas.width() / v.zoom * s;
-    let vh = canvas.height() / v.zoom * s;
+    let point_zoom = (v.zoom / app.canvas_ppp()).max(1e-6);
+    let vw = canvas.width() / point_zoom * s;
+    let vh = canvas.height() / point_zoom * s;
     let c = pos2(rect.min.x + v.center[0] * s, rect.min.y + v.center[1] * s);
     let vr = Rect::from_center_size(c, vec2(vw, vh)).intersect(frame.shrink(1.0));
     ui.painter().rect_stroke(vr, 2.0, Stroke::new(1.5, Color32::from_rgb(255, 84, 84)), StrokeKind::Middle);
@@ -1511,12 +1649,13 @@ fn layers(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                 let opacity_label = if t.pro { tl!("Opacity:") } else { tl!("Opacity") };
                 let right = (body_text_width(ui, opacity_label) + LAYER_PCT_W + 2.0 * ui.spacing().item_spacing.x + 16.0).max(150.0);
                 let w = ui.available_width() - right;
-                let (chosen, hovered) = widgets::dropdown_hovered(ui, "blend", &mut m, &blend_options(l.is_group()), w.max(100.0));
-                if chosen {
+                let (chosen, hovered) = widgets::dropdown_wheel_hovered(ui, "blend", &mut m, &blend_options(l.is_group()), w.max(100.0));
+                // One step per choice: a click, an arrow key or each wheel notch (#1747).
+                for m in &chosen {
                     actions.push(("layer.setProps".into(), json!({"layer": l.id.0, "blend": m.label()})));
                 }
                 // Hovering a mode previews it on the canvas (#970).
-                crate::blend_preview::hover(app, l.id, hovered.filter(|_| !chosen));
+                crate::blend_preview::hover(app, l.id, hovered.filter(|_| chosen.is_empty()));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let mut o = l.opacity * 100.0;
                     let r = widgets::popup_value_field(ui, opacity_label, &mut o, 0.0..=100.0, "%", LAYER_PCT_W);
@@ -1691,17 +1830,20 @@ fn layers(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                 ui.close();
             }
         });
-        if icons::button(
-            ui,
-            "layer-mask",
-            26.0,
-            false,
-            &crate::i18n::fmt(tl!("Add a mask  (from the selection; {key} inverts)"), &[("key", &crate::shortcuts::pretty("Alt"))]),
-        )
-        .clicked()
+        // Like Photoshop the button never replaces a mask (#2075): with a layer mask it adds a
+        // vector mask, and with both it is greyed.
+        let alt = ui.input(|i| i.modifiers.alt);
+        let mask_cmd = crate::layer_menu_ui::mask_button_command(active_layer, doc.selection.is_some(), alt);
+        let mask_tip = if active_layer.is_some_and(|l| l.mask.is_some()) {
+            tl!("Add vector mask").to_string()
+        } else {
+            crate::i18n::fmt(tl!("Add a mask  (from the selection; {key} inverts)"), &[("key", &crate::shortcuts::pretty("Alt"))])
+        };
+        let mask_btn = ui.add_enabled_ui(mask_cmd.is_some(), |ui| icons::button(ui, "layer-mask", 26.0, false, &mask_tip)).inner;
+        if mask_btn.clicked()
+            && let Some(cmd) = mask_cmd
         {
-            let alt = ui.input(|i| i.modifiers.alt);
-            actions.push((crate::layer_menu_ui::add_mask_command(doc.selection.is_some(), alt).into(), json!({})));
+            actions.push((cmd.into(), json!({})));
         }
         let fx = fx_button(ui, 26.0, tl!("Add a layer style"));
         egui::Popup::menu(&fx).open_memory(footer_menu_right_click(&fx)).show(|ui| {
@@ -2101,6 +2243,12 @@ fn layer_row(
     });
 }
 
+/// Screen rect and UVs for a layer thumbnail: the document-shaped part of the square cell and of
+/// the letterboxed square texture, so tall and wide documents don't show empty bars.
+fn layer_thumb_fit(cell: Rect, w: u32, h: u32) -> (Rect, Rect) {
+    crate::channels_panel::fit_thumb(cell, w, h)
+}
+
 fn draw_layer_thumb(app: &mut PhotocraftApp, ctx: &egui::Context, ui: &egui::Ui, doc: &photocraft_doc::Document, l: &Layer, rect: Rect, selected: bool) {
     let t = Tokens::get(ctx);
     let p = ui.painter();
@@ -2127,9 +2275,11 @@ fn draw_layer_thumb(app: &mut PhotocraftApp, ctx: &egui::Context, ui: &egui::Ui,
         _ => {
             // Keep row layout and outside thumbnail decorations when the image is clipped.
             if ui.is_rect_visible(rect) {
-                widgets::checker(p, rect, 5.0);
+                // The texture is a letterboxed square: draw only the part the document fills.
+                let (fitted, uv) = layer_thumb_fit(rect, doc.size.width, doc.size.height);
+                widgets::checker(p, fitted, 5.0);
                 let tex = app.layer_thumb(ctx, doc, l);
-                p.image(tex, rect, Rect::from_min_max(egui::Pos2::ZERO, pos2(1.0, 1.0)), Color32::WHITE);
+                p.image(tex, fitted, uv, Color32::WHITE);
             }
         }
     }
@@ -2207,15 +2357,29 @@ fn history(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
             }
         }
     });
+    let mut footer_cmd: Option<&str> = None;
     if t.pro {
+        let can_delete = app.session.is_enabled("history.deleteState");
+        let can_new = app.session.is_enabled("history.newDocument");
         widgets::panel_footer(ui, |ui| {
-            let _ = icons::button(ui, "trash", 26.0, false, tl!("Delete current state"));
-            let _ = icons::button(ui, "scan", 26.0, false, tl!("Create new snapshot"));
-            let _ = icons::button(ui, "file-plus", 26.0, false, tl!("Create new document from current state"));
+            if ui.add_enabled_ui(can_delete, |ui| icons::button(ui, "trash", 26.0, false, tl!("Delete current state"))).inner.clicked() {
+                footer_cmd = Some("history.deleteState");
+            }
+            // Snapshots are not implemented yet: shown greyed, as Photoshop's footer has the button.
+            ui.add_enabled_ui(false, |ui| icons::button(ui, "scan", 26.0, false, tl!("Create new snapshot")));
+            if ui.add_enabled_ui(can_new, |ui| icons::button(ui, "file-plus", 26.0, false, tl!("Create new document from current state"))).inner.clicked() {
+                footer_cmd = Some("history.newDocument");
+            }
         });
     }
     // An open Free Transform owns Undo (transform_tool::intercept): stepping the document's history under
     // its box would leave it transforming pixels that changed.
+    if let Some(cmd) = footer_cmd.filter(|_| app.ui.transform.is_none())
+        && let Err(e) = app.run(cmd, json!({}))
+    {
+        app.ui.status = e;
+        app.ui.status_error = true;
+    }
     if let Some(delta) = target.filter(|_| app.ui.transform.is_none()) {
         let (cmd, n) = if delta < 0 { ("edit.undo", -delta) } else { ("edit.redo", delta) };
         for _ in 0..n {
@@ -2692,54 +2856,6 @@ fn smoothing_options(ui: &mut egui::Ui, b: &mut photocraft_engine::BrushSettings
         widgets::checkbox(ui, &mut s.catch_up, tl!("Stroke Catch-up"));
         widgets::checkbox(ui, &mut s.catch_up_on_end, tl!("Catch-up on Stroke End"));
         widgets::checkbox(ui, &mut s.adjust_for_zoom, tl!("Adjust for Zoom"));
-    });
-}
-
-/// The symmetry menu's rows: `paint.symmetryFromPath` name and label for each path the Paths
-/// panel lists (saved paths, the Work Path, the selected layer's shape path or vector mask).
-fn symmetry_choices(app: &PhotocraftApp) -> Vec<(String, String)> {
-    use crate::vector_ui::PathRow;
-    let Some(st) = app.session.active() else { return Vec::new() };
-    crate::vector_ui::path_rows(&st.doc, st.active_layer)
-        .into_iter()
-        .map(|row| match row.kind {
-            PathRow::Saved => (row.name.clone(), row.name),
-            PathRow::Work => ("work".to_string(), tl!("Work Path").to_string()),
-            PathRow::Layer => ("layer".to_string(), row.name),
-        })
-        .collect()
-}
-
-/// Options-bar painting symmetry: Symmetry Off, or mirror Brush and Eraser strokes across one of
-/// the document's paths (`paint.symmetryFromPath`). The button is lit while symmetry is on.
-fn symmetry_menu(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
-    let t = Tokens::get(ui.ctx());
-    let current = app.session.active().and_then(|st| st.symmetry_path.as_ref()).map(|axis| axis.source.clone());
-    let choices = symmetry_choices(app);
-    let resp = icons::button(ui, "arrow-left-right", 24.0, current.is_some(), tl!("Set painting symmetry options"));
-    let resp = crate::brush_picker::named(resp, tl!("Set painting symmetry options"));
-    egui::Popup::menu(&resp).show(|ui| {
-        ui.set_min_width(200.0);
-        let mut run = None;
-        if ui.add(egui::Button::selectable(current.is_none(), tl!("Symmetry Off"))).clicked() {
-            run = current.is_some().then(|| ("paint.symmetryDisable", json!({})));
-            ui.close();
-        }
-        ui.separator();
-        if choices.is_empty() {
-            ui.label(RichText::new(tl!("Draw with the Pen tool (P) or make a work path from a selection.")).color(t.text_faint));
-        }
-        for (name, label) in &choices {
-            if ui.add(egui::Button::selectable(current.as_ref() == Some(name), label)).clicked() {
-                run = Some(("paint.symmetryFromPath", json!({ "name": name })));
-                ui.close();
-            }
-        }
-        if let Some((id, params)) = run
-            && let Err(e) = app.run(id, params)
-        {
-            app.ui.status = e;
-        }
     });
 }
 
@@ -3240,6 +3356,42 @@ mod history_transform_tests {
             }
         }
     }
+
+    /// The Photoshop-theme footer (#1117): trash deletes the current state, file-plus makes a
+    /// new document from it, and the snapshot button is greyed (snapshots aren't implemented).
+    #[test]
+    fn history_footer_buttons_run_their_commands() {
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"width": 200, "height": 150})).unwrap();
+        app.run("layer.new.layer", json!({})).unwrap();
+        app.run("edit.fill", json!({"color": "#ff0000"})).unwrap();
+        let mut h = Harness::builder().with_size(vec2(300.0, 400.0)).build_ui_state(|ui, app: &mut PhotocraftApp| history(app, ui), app);
+        PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ProMedium);
+        h.state_mut().ui.theme = crate::theme::ThemeKind::ProMedium;
+        h.run_steps(3);
+        // Footer buttons are the only 26 pt squares; the bar lays them out right to left.
+        let buttons = |h: &Harness<'static, PhotocraftApp>| {
+            let mut b: Vec<(Rect, bool)> = h.ctx.viewport(|v| {
+                v.prev_pass.widgets.layers().flat_map(|(_, w)| w.iter()).filter(|w| w.rect.size() == vec2(26.0, 26.0)).map(|w| (w.rect, w.enabled)).collect()
+            });
+            b.sort_by(|a, b| b.0.center().x.total_cmp(&a.0.center().x));
+            b
+        };
+        let b = buttons(&h);
+        assert_eq!(b.len(), 3, "trash, snapshot, new document: {b:?}");
+        assert!(b[0].1 && !b[1].1 && b[2].1, "only the snapshot button is disabled: {b:?}");
+        let docs = h.state().session.documents().len();
+        click(&mut h, b[2].0.center());
+        assert_eq!(h.state().session.documents().len(), docs + 1, "file-plus makes a new document");
+        h.state_mut().session.set_active(0);
+        h.run_steps(2);
+        let steps = h.state().session.active().unwrap().history.entries().len();
+        let b = buttons(&h);
+        click(&mut h, b[0].0.center());
+        let st = h.state().session.active().unwrap();
+        assert_eq!(st.history.entries().len(), steps - 1, "trash deletes the current state");
+        assert!(!st.history.can_redo(), "and it can't be redone");
+    }
 }
 
 #[cfg(test)]
@@ -3557,6 +3709,74 @@ mod toolbar_tests {
         assert!(!h.state().ui.panels.toolbar_double);
         assert_eq!(left(&h), single);
     }
+
+    fn click(h: &mut egui_kittest::Harness<'_, PhotocraftApp>, p: egui::Pos2) {
+        h.hover_at(p);
+        h.run_steps(1);
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+            h.run_steps(1);
+        }
+    }
+
+    /// The Hand tool's toolbar button: tool buttons have no label, so find it by slot order.
+    fn hand_button(h: &egui_kittest::Harness<'_, PhotocraftApp>) -> egui::Pos2 {
+        let size = egui::Vec2::splat(if Tokens::get(&h.ctx).pro { 30.0 } else { 36.0 });
+        let buttons: Vec<Rect> = h.ctx.viewport(|v| {
+            v.prev_pass.widgets.layers().flat_map(|(_, w)| w.iter()).filter(|w| w.rect.size() == size && w.sense.senses_click()).map(|w| w.rect).collect()
+        });
+        let index = TOOL_SECTIONS.iter().flat_map(|section| section.iter()).position(|slot| slot.contains(&Tool::Hand)).unwrap();
+        buttons[index].center()
+    }
+
+    fn toolbar_harness(app: PhotocraftApp) -> egui_kittest::Harness<'static, PhotocraftApp> {
+        // 60 fps steps, so two clicks a few frames apart are a double-click.
+        let mut h = egui_kittest::Harness::builder().with_size(vec2(800.0, 1400.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+            |ui, app: &mut PhotocraftApp| {
+                if ui.ctx().fonts(|f| f.families().contains(&egui::FontFamily::Name("medium".into()))) {
+                    toolbar(app, ui);
+                }
+            },
+            app,
+        );
+        PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::Studio);
+        h.run_steps(2);
+        h
+    }
+
+    /// Double-clicking the Hand tool fits the image on screen (Photoshop); a single click only
+    /// picks the tool.
+    #[test]
+    fn double_clicking_the_hand_tool_fits_on_screen() {
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"width": 64, "height": 64})).unwrap();
+        app.ui.tool = Tool::Move;
+        app.ui.views[0].fit_pending = false;
+        let mut h = toolbar_harness(app);
+        let p = hand_button(&h);
+        click(&mut h, p);
+        assert_eq!(h.state().ui.tool, Tool::Hand);
+        assert!(!h.state().ui.views[0].fit_pending, "a single click doesn't fit");
+        // Past the double-click window, so the next two clicks are a fresh double-click.
+        h.run_steps(40);
+        click(&mut h, p);
+        click(&mut h, p);
+        assert_eq!(h.state().ui.tool, Tool::Hand);
+        assert!(h.state().ui.views[0].fit_pending, "a double-click fits on screen");
+    }
+
+    /// With no document open the double-click still picks the tool and doesn't panic.
+    #[test]
+    fn double_clicking_the_hand_tool_without_a_document_is_harmless() {
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        app.ui.tool = Tool::Move;
+        let mut h = toolbar_harness(app);
+        let p = hand_button(&h);
+        click(&mut h, p);
+        click(&mut h, p);
+        assert_eq!(h.state().ui.tool, Tool::Hand);
+        assert!(h.state().session.active().is_none());
+    }
 }
 
 #[cfg(test)]
@@ -3696,5 +3916,14 @@ mod group_drag_selection_tests {
         assert_eq!(layer_drop_payload(9, group, "into", &[a, b]), json!({"layer": 9, "target": 20, "position": "into"}));
         assert_eq!(layer_drop_payload(a.0, group, "above", &[a]), json!({"layer": 10, "target": 20, "position": "above"}));
         assert_eq!(layer_drop_payload(a.0, group, "below", &[]), json!({"layer": 10, "target": 20, "position": "below"}));
+    }
+
+    #[test]
+    fn layer_thumb_of_a_tall_document_fills_the_height() {
+        let cell = Rect::from_min_size(pos2(10.0, 20.0), vec2(30.0, 30.0));
+        let (r, uv) = layer_thumb_fit(cell, 100, 400);
+        assert_eq!((r.top(), r.bottom()), (cell.top(), cell.bottom()));
+        assert!((r.width() - 7.5).abs() < 1e-3, "{r:?}");
+        assert!((uv.width() - 0.25).abs() < 1e-3 && (uv.height() - 1.0).abs() < 1e-3, "{uv:?}");
     }
 }

@@ -4297,6 +4297,7 @@ dependencies = [
 name = "photocraft-raw"
 version = "0.5.0"
 dependencies = [
+ "flate2",
  "photocraft-raw",
  "png 0.18.1",
  "rayon",

@@ -50,3 +50,16 @@ sync_github_name = false
 
 [people.Elvis33LE]
 sync_github_name = true
+
+[people.stevanmarjanovic]
+sync_github_name = true
+
+[people.Hathor875]
+real_name = "Krzysztof Cieślik"
+sync_github_name = true
+
+[people.maxm11]
+sync_github_name = true
+
+[people.skraus2]
+sync_github_name = true
