@@ -488,6 +488,10 @@ pub fn is_enabled(app: &PhotocraftApp, id: &str) -> bool {
     if crate::enable_rules::disabled(app, id) {
         return false;
     }
+    // A pending crop greys most of the File menu, as in Photoshop (#1918).
+    if let Some(e) = crate::crop_ui::is_enabled(app, id) {
+        return e;
+    }
     if let Some(e) = crate::workspace_ui::is_enabled(app, id) {
         return e;
     }

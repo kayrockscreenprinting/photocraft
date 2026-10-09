@@ -3856,6 +3856,10 @@ pub fn commit_polygon(app: &mut PhotocraftApp) {
 
 /// Apply the crop tool's rectangle.
 pub fn commit_crop(app: &mut PhotocraftApp) {
+    // A frame drawn on another document crops nothing here (#1918).
+    if crate::crop_ui::drop_if_moved(app) {
+        return;
+    }
     let Some(r) = app.ui.crop_rect.take() else { return };
     // The untouched default frame crops nothing (Photoshop's ↵ on it does nothing).
     if std::mem::take(&mut app.crop.default_frame) {
