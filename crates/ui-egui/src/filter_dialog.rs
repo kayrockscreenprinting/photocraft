@@ -45,7 +45,7 @@ pub struct Param {
 /// Parse the registry's parameter notation, e.g.
 /// `{"radius":0.1..1000=1,"method":"spin|zoom","monochromatic":bool,"seed":u32=0,"horizontal":px=0}`.
 pub fn parse_spec(spec: &str) -> Vec<Param> {
-    let inner = spec.trim().trim_start_matches('{').trim_end_matches('}');
+    let inner = object_body(spec);
     let mut out = Vec::new();
     // Split on commas that start a new `"key":` (not inside strings or brackets).
     let mut parts: Vec<String> = Vec::new();
@@ -111,6 +111,30 @@ pub fn parse_spec(spec: &str) -> Vec<Param> {
         out.push(Param { key, kind });
     }
     out
+}
+
+/// The inside of the spec's leading `{…}` object. Notes after it, like `→ {…}` results or
+/// `(per-range [c,m,y,k] arrays: …)`, are documentation: read as parameters, their commas split
+/// off junk fields and glued the note onto the last parameter (Selective Color's `"reds":json`
+/// became a number field, and its OK then failed).
+fn object_body(spec: &str) -> &str {
+    let s = spec.trim();
+    let Some(body) = s.strip_prefix('{') else { return s };
+    let (mut depth, mut in_str) = (0i32, false);
+    for (i, ch) in body.char_indices() {
+        match ch {
+            '"' => in_str = !in_str,
+            '[' | '{' if !in_str => depth += 1,
+            ']' | '}' if !in_str => {
+                if depth == 0 {
+                    return body.get(..i).unwrap_or(body);
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    body.trim_end_matches('}')
 }
 
 /// Parameter keys measured in pixels (scaled for proxy previews).
@@ -711,5 +735,34 @@ mod tests {
         for n in ["Bricks", "ask", "ask 2"] {
             assert!(names.contains(&n), "{n} in {names:?}");
         }
+    }
+
+    #[test]
+    fn notes_after_a_spec_are_not_parameters() {
+        // A note after the object, like Selective Color's "(per-range [c,m,y,k] arrays: …)", was
+        // parsed as parameters: its commas split off junk fields and it glued itself onto the last
+        // one, so "reds":json became a number field the dialog showed and sent.
+        let p = parse_spec(r#"{"a":0..10=1,"b":json} (notes [x,y,z] here, and more) → {"c":id}"#);
+        assert_eq!(p, vec![Param { key: "a".into(), kind: Kind::Range { min: 0.0, max: 10.0, default: 1.0 } }, Param { key: "b".into(), kind: Kind::Json }]);
+        // Every command with a schema dialog has plain parameter keys.
+        for c in photocraft_engine::command_specs().iter().filter(|c| has_dialog(c.id)) {
+            for p in parse_spec(c.params) {
+                assert!(p.key.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_'), "{}: junk parameter {:?}", c.id, p.key);
+            }
+        }
+    }
+
+    #[test]
+    fn selective_color_dialog_ok_applies() {
+        // With the junk `reds: 0` the dialog's OK failed (`reds` must be an array of 4 numbers).
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"width": 8, "height": 8})).unwrap();
+        let id = open(&mut app, "image.adjustments.selectiveColor").unwrap();
+        let fields = app.ui.dialogs.last().unwrap().fields.clone();
+        assert!(fields.keys().all(|k| k.starts_with("__") || k.chars().all(|ch| ch.is_ascii_alphanumeric())), "{fields:?}");
+        assert!(!fields.contains_key("reds"), "the per-range arrays are not dialog fields");
+        app.ui.dialog_mut(id).unwrap().fields.insert("black".into(), json!(40.0));
+        crate::dialogs::confirm(&mut app, id).unwrap();
+        assert_eq!(app.session.journal.last().map(|j| j.0.as_str()), Some("image.adjustments.selectiveColor"));
     }
 }
