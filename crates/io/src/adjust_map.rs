@@ -106,9 +106,6 @@ pub enum Channels {
     Other,
 }
 
-/// Parses an adjustment block. `cged` is the optional `CgEd` block data
-/// (modern brightness/contrast parameters). Levels/Curves store the
-/// composite record first, then one per document channel (see [`Channels`]).
 /// The menu name of the adjustment a PSD key holds (for messages).
 pub fn label(key: &[u8; 4]) -> &'static str {
     match key {
@@ -141,6 +138,9 @@ pub fn unreadable_reason(key: &[u8; 4], data: &[u8]) -> Option<String> {
     }
 }
 
+/// Parses an adjustment block. `cged` is the optional `CgEd` block data
+/// (modern brightness/contrast parameters). Levels/Curves store the
+/// composite record first, then one per document channel (see [`Channels`]).
 pub fn parse(key: &[u8; 4], data: &[u8], cged: Option<&[u8]>, channels: Channels) -> Adjustment {
     // A CMYK Channel Mixer (any record using the fourth, black, source) has no RGB meaning:
     // keep it raw. Mixers written by `write` leave that source at 0 and map in every mode.
