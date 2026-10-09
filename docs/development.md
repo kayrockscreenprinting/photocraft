@@ -352,6 +352,28 @@ How the web shell (`apps/photocraft-web/src/web.rs`) differs from desktop:
 - Headless Chrome on macOS (`--headless=new --enable-unsafe-webgpu`) gets a real WebGPU adapter.
 
 
+## Indexed Color timings
+
+`cargo run --release -p photocraft-engine --example indexed_color_perf -- image.png` measures
+palette construction, Floyd–Steinberg diffusion, and the complete full-resolution CPU preview
+path (proxy copy, engine command, result composition; excludes GPU upload/presentation).
+It prints JSON lines for 8, 16, 32, 64, 128 and 256 colours, with one warmup and three measured
+runs per count, plus palette and pixel hashes for exact before/after comparisons. Input files
+stay local; do not publish personal images, palettes, or metadata with benchmark reports.
+
+The synthetic 24 MP lookup comparison is reproducible with
+`cargo test --release -p photocraft-algo indexed_diffusion_24mp_release_comparison -- --ignored --nocapture`.
+It alternates linear/accelerated lookup order and checks identical indices and pixels.
+For the 2026-10-09 local timings both binaries used `CARGO_PROFILE_RELEASE_LTO=false` and
+`CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16`; compare binaries built with the same settings.
+
+On native desktop sessions, Indexed Color live previews calculate and flatten on one worker.
+The last preview remains visible while dragging; intermediate settings are coalesced, and only
+a result matching the current document revision, active layer, dialog and parameters is uploaded.
+GPU upload/display conversion still run on the UI thread. Web and `PHOTOCRAFT_INLINE_JOBS=1`
+sessions retain synchronous previews. Closing the dialog invalidates its result; an already
+running calculation finishes without editing the session.
+
 ## Offscreen UI snapshots (no window)
 
 Render the full UI headlessly with the real wgpu canvas, e.g. for design reviews or when the app

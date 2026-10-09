@@ -361,7 +361,7 @@ pub fn confirm(app: &mut PhotocraftApp, id: u64) -> Result<Value, String> {
             let running = app
                 .session
                 .active()
-                .is_some_and(|st| app.filter_preview.as_ref().is_some_and(|p| p.doc == st.doc.id) && app.session.job_on(st.doc.id).is_some());
+                .is_some_and(|st| app.filter_preview.as_ref().is_some_and(|p| p.key.doc == st.doc.id) && app.session.job_on(st.doc.id).is_some());
             match app.filter_preview.as_mut() {
                 Some(p) if result.is_ok() && running => p.committing = true,
                 _ => app.filter_preview = None,
@@ -409,14 +409,16 @@ mod tests {
         let id = open_command_dialog(&mut app, "filter.blur.gaussianBlur", "Gaussian Blur");
         let st = app.session.active().unwrap();
         let result = crate::filter_dialog::preview_document(&st.doc, st.active_layer, "filter.blur.gaussianBlur", &serde_json::json!({"radius": 4.0}), 1);
-        app.filter_preview = Some(crate::filter_dialog::FilterPreview {
+        let key = crate::filter_dialog::FilterPreviewKey {
             doc: st.doc.id,
             revision: st.revision,
-            hash: 0,
+            dialog: id,
+            active: st.active_layer,
+            command: "filter.blur.gaussianBlur".into(),
+            params: serde_json::json!({"radius": 4.0}),
             k: 1,
-            result: result.map(std::sync::Arc::new),
-            committing: false,
-        });
+        };
+        app.filter_preview = Some(crate::filter_dialog::FilterPreview { key, result: result.map(std::sync::Arc::new), committing: false });
         (app, id)
     }
 
