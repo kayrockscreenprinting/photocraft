@@ -59,3 +59,29 @@ fn pattern_fill_survives_psd_and_layered_tiff_in_every_mode() {
         }
     }
 }
+
+/// A Pattern Fill with a vector mask stays a fill layer: written with its pattern pixels it came
+/// back as a shape showing them unmasked (psd-tools adjustment-fillers.psd). Diagnosis and test by
+/// @itsF4LCON on #1917.
+#[test]
+fn vector_masked_pattern_fill_stays_a_fill_layer() {
+    use photocraft_doc::{Path, Subpath, VectorMask};
+    for mode in [ColorMode::Rgb, ColorMode::Cmyk, ColorMode::Lab] {
+        let mut d = doc(mode, SampleType::U8);
+        d.layers[0].vector_mask = Some(VectorMask::new(Path::new(vec![Subpath::polygon(&[(0.0, 0.0), (20.0, 0.0), (20.0, 24.0), (0.0, 24.0)])])));
+        // An opaque layer below, so the masked-out half shows it rather than transparency.
+        let fmt = d.pixel_format();
+        let mut bg = Layer::raster("Background", fmt);
+        bg.surface_mut().expect("raster").fill_rect(d.bounds(), &photocraft_raster::from_rgba(&fmt, [1.0, 1.0, 1.0, 1.0]));
+        d.layers.insert(0, bg);
+        let r = export(&d, "x.psd", &ExportOptions::default()).expect("export");
+        let back = import("x.psd", &r.bytes).expect("import").document;
+        let l = back.layers.iter().find(|l| l.name == "Pattern Fill 1").expect("layer");
+        assert!(matches!(l.content, LayerContent::Fill(Fill::Pattern { .. })), "{mode:?}: not a pattern fill layer");
+        assert!(l.vector_mask.is_some(), "{mode:?}");
+        // No pixels are stored, so it renders live from the pattern, as before saving.
+        let (before, after) = (photocraft_compose::flatten(&d), photocraft_compose::flatten(&back));
+        let diff = before.px.iter().zip(&after.px).flat_map(|(p, q)| p.iter().zip(q).map(|(u, v)| (u - v).abs())).fold(0.0, f32::max);
+        assert!(diff < 0.02, "{mode:?}: the reopened pattern fill differs by {diff}");
+    }
+}

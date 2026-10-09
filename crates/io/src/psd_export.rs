@@ -772,6 +772,14 @@ impl Ex {
     /// Pixels for a fill layer: Photoshop's cached rendering while valid,
     /// otherwise our own rendering of the fill over the canvas.
     fn fill_pixels(&self, l: &Layer, f: &photocraft_doc::Fill) -> Surface {
+        // Import keeps a `PtFl` layer with vector data as a fill layer only when it stores no
+        // pixels; with pixels it becomes a shape that shows them as its rendering, unmasked. So a
+        // vector-masked pattern fill is written without pixels, as Photoshop writes it (psd-tools
+        // adjustment-fillers.psd). Before the fill cache: a vector mask added after import must
+        // not write the old full-canvas cache either.
+        if matches!(f, photocraft_doc::Fill::Pattern { .. }) && l.vector_mask.is_some() {
+            return Surface::new(self.fmt);
+        }
         if let Some(c) = &l.fill_cache
             && c.fill == *f
         {
