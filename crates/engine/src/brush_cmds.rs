@@ -74,11 +74,17 @@ pub fn parse_points(p: &Value, cmd: &str) -> Result<Vec<StrokePoint>> {
     if pts.is_empty() {
         return Err(bad(cmd, "`points` is empty"));
     }
-    // A stroke runs dab by dab along its length: an absurd coordinate would mean billions of dabs.
+    check_coords(&pts, cmd)?;
+    Ok(pts)
+}
+
+/// A stroke runs dab by dab along its length: an absurd coordinate would mean billions of dabs.
+/// Shared by the painting and the retouch tools' `points` (#976).
+pub(crate) fn check_coords(pts: &[StrokePoint], cmd: &str) -> Result<()> {
     if pts.iter().any(|q| !(q.x.abs() <= MAX_COORD && q.y.abs() <= MAX_COORD)) {
         return Err(bad(cmd, format!("point coordinates must be finite and within ±{MAX_COORD}")));
     }
-    Ok(pts)
+    Ok(())
 }
 
 /// Deep-merge `patch` into `base` (objects merge key by key; anything else replaces).
