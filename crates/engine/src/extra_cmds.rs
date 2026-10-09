@@ -178,8 +178,14 @@ fn stroke(s: &mut Session, p: &Value) -> Result<Value> {
             "outside" => (width, 0),
             _ => (width / 2, width.div_ceil(2)),
         };
-        let outer = sel::expand(&padded, pw, ph, out_px as f32);
-        let inner = sel::contract(&padded, pw, ph, in_px as f32);
+        let mut outer = sel::expand(&padded, pw, ph, out_px as f32);
+        let mut inner = sel::contract(&padded, pw, ph, in_px as f32);
+        // A hard-edged selection strokes hard, as in Photoshop: a pixel whose centre is less than
+        // width + 1 from a selected pixel's is stroked whole, so curves get no partial pixels.
+        if padded.iter().all(|v| *v <= 0.0 || *v >= 1.0) {
+            outer.iter_mut().for_each(|v| *v = if *v > 0.0 { 1.0 } else { 0.0 });
+            inner.iter_mut().for_each(|v| *v = if *v >= 1.0 { 1.0 } else { 0.0 });
+        }
         let band: Vec<f32> = outer
             .chunks_exact(pw)
             .zip(inner.chunks_exact(pw))
@@ -972,6 +978,84 @@ mod tests {
             }
         }
         assert!(wrong.is_empty(), "{} pixels differ from Photoshop:\n{}", wrong.len(), wrong.iter().take(40).cloned().collect::<Vec<_>>().join("\n"));
+    }
+
+    /// Photoshop's 6 px Outside stroke of a 14 px circle selection made without anti-aliasing,
+    /// read pixel by pixel from Photoshop (`#` stroked, `.` not; the hole is the selection). A
+    /// hard selection gives a hard stroke: a pixel is stroked when its centre is less than
+    /// width + 1 from a selected pixel's centre (no partial pixels on the curve).
+    const PS_CIRCLE_OUTSIDE_6: [&str; 31] = [
+        "..................................",
+        "..................................",
+        "...........############...........",
+        "..........##############..........",
+        ".........################.........",
+        "........##################........",
+        ".......####################.......",
+        "......######################......",
+        ".....#########......#########.....",
+        "....#########........#########....",
+        "....########..........########....",
+        "....#######............#######....",
+        "....######..............######....",
+        "....######..............######....",
+        "....######..............######....",
+        "....######..............######....",
+        "....######..............######....",
+        "....######..............######....",
+        "....#######............#######....",
+        "....########..........########....",
+        "....#########........#########....",
+        ".....#########......#########.....",
+        "......######################......",
+        ".......####################.......",
+        "........##################........",
+        ".........################.........",
+        "..........##############..........",
+        "...........############...........",
+        "..................................",
+        "..................................",
+        "..................................",
+    ];
+
+    #[test]
+    fn a_hard_circle_strokes_like_photoshop() {
+        let rows = PS_CIRCLE_OUTSIDE_6;
+        let (w, h) = (rows[0].len(), rows.len());
+        // The selection: the `.` cells enclosed by the ring on each row.
+        let mut mask = vec![0.0f32; w * h];
+        for (y, row) in rows.iter().enumerate() {
+            let b = row.as_bytes();
+            if let (Some(first), Some(last)) = (b.iter().position(|c| *c == b'#'), b.iter().rposition(|c| *c == b'#')) {
+                for x in first..=last {
+                    if b[x] == b'.' {
+                        mask[y * w + x] = 1.0;
+                    }
+                }
+            }
+        }
+        for depth in [8, 16, 32] {
+            let mut s = Session::new();
+            s.execute("file.new", json!({"width": w, "height": h, "depth": depth})).unwrap();
+            s.execute("layer.new.layer", json!({})).unwrap();
+            s.edit("select", |doc, _| {
+                doc.selection = Some(sel::mask_to_surface(&mask, doc.bounds()));
+                Ok(())
+            })
+            .unwrap();
+            s.execute("edit.stroke", json!({"width": 6, "color": "#000000", "location": "outside"})).unwrap();
+            let mut wrong = Vec::new();
+            for (y, row) in rows.iter().enumerate() {
+                for (x, c) in row.bytes().enumerate() {
+                    let want = if c == b'#' { 1.0 } else { 0.0 };
+                    let a = pixel(&s, x as i32, y as i32)[3];
+                    if (a - want).abs() > 0.004 {
+                        wrong.push(format!("({x}, {y}): {a}, Photoshop {want}"));
+                    }
+                }
+            }
+            assert!(wrong.is_empty(), "{depth}-bit: {} pixels differ from Photoshop: {wrong:?}", wrong.len());
+        }
     }
 
     /// Select All, then Stroke › Inside draws a border around the canvas (a common Photoshop
