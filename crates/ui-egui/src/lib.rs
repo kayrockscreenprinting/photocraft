@@ -47,6 +47,8 @@ pub mod comps_ui;
 pub mod control;
 pub mod credits;
 pub mod crop_overlay;
+pub mod crop_shield;
+pub mod crop_straighten;
 pub mod crop_ui;
 pub mod dialog_blend_ui;
 pub mod dialogs;
@@ -1719,6 +1721,8 @@ mod stamp_tests;
 
 #[cfg(test)]
 mod alt_click_tests;
+#[cfg(test)]
+mod stroke_timing_tests;
 
 #[cfg(test)]
 mod polygon_lasso_tests;
