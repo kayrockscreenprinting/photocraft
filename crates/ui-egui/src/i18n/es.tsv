@@ -2248,6 +2248,8 @@ cameraRaw	Amount	Cantidad
 
 # Shared screen eyedropper and text Color Picker (#1128).
 	Color Picker (Text Color)	Selector de color (Color del texto)
+	Color Picker (Fill Color)	Selector de color (Color de relleno)
+	Fill color	Color de relleno
 	Pick screen color	Elegir color de pantalla
 	Sample a pixel anywhere on the screen	Tomar un píxel en cualquier lugar de la pantalla
 	Click to pick · Esc to cancel	Clic para elegir · Esc para cancelar

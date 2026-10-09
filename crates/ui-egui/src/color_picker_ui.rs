@@ -199,6 +199,23 @@ pub fn open_for_command(app: &mut PhotocraftApp, label: &str, rgb: [f32; 3], com
     app.ui.open_dialog(DialogKind::Command, f)
 }
 
+/// Open the picker on `rgb` for a colour field of another dialog (e.g. Edit › Fill's Color…): OK
+/// writes `"#rrggbb"` into `field` of dialog `dialog`, which stays open; Cancel leaves it alone.
+pub fn open_for_field(app: &mut PhotocraftApp, label: &str, rgb: [f32; 3], dialog: u64, field: &str) -> u64 {
+    let hsv = rgb_to_hsv(rgb);
+    let mut f = Map::new();
+    f.insert("__colorPicker".into(), json!("field"));
+    f.insert("__label".into(), json!(label));
+    f.insert("__dialog".into(), json!(dialog));
+    f.insert("__field".into(), json!(field));
+    f.insert("color".into(), json!(hex(rgb)));
+    f.insert("__orig".into(), json!(hex(rgb)));
+    f.insert("__hsv".into(), json!(hsv));
+    f.insert("__mode".into(), json!("h"));
+    f.insert("__webOnly".into(), json!(false));
+    app.ui.open_dialog(DialogKind::Command, f)
+}
+
 pub fn owns(f: &Map<String, Value>) -> bool {
     f.contains_key("__colorPicker")
 }
@@ -596,6 +613,14 @@ pub fn confirm(app: &mut PhotocraftApp, f: &Map<String, Value>) -> Result<Value,
         let mut p = f.get("__params").cloned().filter(Value::is_object).unwrap_or_else(|| json!({}));
         p["color"] = json!(color);
         return app.run(cmd, p);
+    }
+    if target == "field" {
+        let (Some(dialog), Some(field)) = (f.get("__dialog").and_then(Value::as_u64), f.get("__field").and_then(Value::as_str)) else {
+            return Err("the Color Picker has no field to set".into());
+        };
+        let d = app.ui.dialog_mut(dialog).ok_or("the dialog this colour was for is closed")?;
+        d.fields.insert(field.into(), json!(color));
+        return Ok(json!({ "color": color }));
     }
     let r = app.run("tools.setColors", json!({ target: color }))?;
     if target == "foreground" {

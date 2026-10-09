@@ -2442,6 +2442,8 @@ cameraRaw	Roughness	Шорсткість
 
 # Shared screen eyedropper and text Color Picker (#1128).
 	Color Picker (Text Color)	Вибір кольору (колір тексту)
+	Color Picker (Fill Color)	Вибір кольору (колір заливки)
+	Fill color	Колір заливки
 	Pick screen color	Вибрати колір з екрана
 	Sample a pixel anywhere on the screen	Взяти зразок пікселя будь-де на екрані
 	Click to pick · Esc to cancel	Клацніть для вибору · Esc для скасування

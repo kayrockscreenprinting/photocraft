@@ -2452,6 +2452,8 @@ cameraRaw	Roughness	Неровность
 
 # Shared screen eyedropper and text Color Picker (#1128).
 	Color Picker (Text Color)	Палитра цветов (Цвет текста)
+	Color Picker (Fill Color)	Палитра цветов (Цвет заливки)
+	Fill color	Цвет заливки
 	Pick screen color	Выбрать цвет на экране
 	Sample a pixel anywhere on the screen	Выберите пиксель в любом месте экрана
 	Click to pick · Esc to cancel	Щелчок — выбрать · Esc — отменить

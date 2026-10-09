@@ -2613,6 +2613,8 @@ cameraRaw	Whites	Brancos
 
 # Shared screen eyedropper and text Color Picker (#1128).
 	Color Picker (Text Color)	Seletor de cores (Cor do texto)
+	Color Picker (Fill Color)	Seletor de cores (Cor de preenchimento)
+	Fill color	Cor de preenchimento
 	Pick screen color	Escolher cor da tela
 	Sample a pixel anywhere on the screen	Amostrar um pixel em qualquer lugar da tela
 	Click to pick · Esc to cancel	Clique para escolher · Esc para cancelar

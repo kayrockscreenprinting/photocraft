@@ -130,6 +130,21 @@ fn parse_hex(h: &str) -> [u8; 3] {
     [d(1), d(3), d(5)]
 }
 
+/// Set by the body when Contents › Color… is chosen or the swatch is clicked; the dialog loop
+/// then opens the Color Picker ([`open_requested_picker`]), which needs the dialog's id.
+const PICK: &str = "__pickColor";
+
+/// Opens PhotoCraft's Color Picker for Fill dialog `id` when its body asked for it: OK sets the
+/// dialog's colour (not the foreground), Cancel leaves it as it was.
+pub fn open_requested_picker(app: &mut PhotocraftApp, id: u64) {
+    let Some(d) = app.ui.dialog_mut(id) else { return };
+    if !owns(&d.fields) || d.fields.remove(PICK).is_none() {
+        return;
+    }
+    let rgb = parse_hex(&get_str(&d.fields, "color", "#000000")).map(|v| f32::from(v) / 255.0);
+    crate::color_picker_ui::open_for_field(app, tl!("Color Picker (Fill Color)"), rgb, id, "color");
+}
+
 /// The dialog body.
 pub fn body(app: &PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
     ui.spacing_mut().item_spacing.y = 6.0;
@@ -139,15 +154,20 @@ pub fn body(app: &PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) 
         let opts: Vec<(String, &str)> = CONTENTS.iter().map(|(k, l)| (k.to_string(), *l)).collect();
         if crate::widgets::dropdown(ui, "fill-contents", &mut contents, &opts, 170.0) {
             f.insert("contents".into(), json!(contents));
+            // Choosing Color… opens the Color Picker, as in Photoshop.
+            if contents == "color" {
+                f.insert(PICK.into(), json!(true));
+            }
         }
     });
     match contents.as_str() {
         "color" => {
             ui.horizontal(|ui| {
                 label(ui, tl!("Color:"));
-                let mut rgb = parse_hex(&get_str(f, "color", "#000000"));
-                if crate::widgets::color_edit_button_srgb(ui, &mut rgb).changed() {
-                    f.insert("color".into(), json!(format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2])));
+                // Photoshop shows no swatch; this one reopens the Color Picker on the colour.
+                let rgb = parse_hex(&get_str(f, "color", "#000000"));
+                if crate::widgets::color_swatch_button(ui, egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]), tl!("Fill color")).clicked() {
+                    f.insert(PICK.into(), json!(true));
                 }
             });
         }

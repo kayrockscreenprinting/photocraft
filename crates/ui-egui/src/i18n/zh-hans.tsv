@@ -2186,6 +2186,8 @@ cameraRaw	Blending	混合
 
 # Shared screen eyedropper and text Color Picker (#1128).
 	Color Picker (Text Color)	拾色器（文字颜色）
+	Color Picker (Fill Color)	拾色器（填充颜色）
+	Fill color	填充颜色
 	Pick screen color	选取屏幕颜色
 	Sample a pixel anywhere on the screen	在屏幕任意位置采样像素
 	Click to pick · Esc to cancel	单击选取 · Esc 取消

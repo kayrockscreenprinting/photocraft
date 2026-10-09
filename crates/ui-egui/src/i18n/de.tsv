@@ -2217,6 +2217,8 @@
 
 # Shared screen eyedropper and text Color Picker (#1128).
 	Color Picker (Text Color)	Farbwähler (Textfarbe)
+	Color Picker (Fill Color)	Farbwähler (Füllfarbe)
+	Fill color	Füllfarbe
 	Pick screen color	Bildschirmfarbe auswählen
 	Sample a pixel anywhere on the screen	Ein Pixel an beliebiger Stelle auf dem Bildschirm auswählen
 	Click to pick · Esc to cancel	Klicken zum Auswählen · Esc zum Abbrechen

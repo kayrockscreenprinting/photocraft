@@ -2161,6 +2161,8 @@ cameraRaw	Color	カラー
 
 # Shared screen eyedropper and text Color Picker (#1128).
 	Color Picker (Text Color)	カラーピッカー（文字色）
+	Color Picker (Fill Color)	カラーピッカー（塗りつぶしカラー）
+	Fill color	塗りつぶしカラー
 	Pick screen color	画面の色を選択
 	Sample a pixel anywhere on the screen	画面上の任意のピクセルから色を取得
 	Click to pick · Esc to cancel	クリックで選択 · Escでキャンセル
