@@ -5,6 +5,9 @@ use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Response, Sense, Stroke, S
 
 use crate::theme::{self, Tokens};
 
+mod color_count;
+pub use color_count::color_count_row;
+
 /// An accent insertion line on one edge of `r` while a drag hovers it (vertical: on its left or,
 /// `after`, right edge; else on its top or bottom).
 pub fn drop_line(ui: &Ui, r: Rect, after: bool, vertical: bool, t: &Tokens) {
@@ -44,6 +47,8 @@ pub struct CardResponse {
     pub strip: Response,
     /// The panel menu button (hamburger in Pro, ellipsis in Studio).
     pub menu: Response,
+    /// A tab was clicked or chosen from the overflow menu.
+    pub tab_clicked: bool,
     /// A tab was double-clicked (Photoshop collapses the group).
     pub tab_double_clicked: bool,
     /// Rects of the tabs on the strip, `(tab index, rect)`; tabs that don't fit are in the
@@ -82,7 +87,14 @@ pub fn card_ex(ui: &mut Ui, id: &str, tabs: &[&str], selected: &mut usize, colla
                 ui.add_space(6.0);
                 body(ui, *selected);
             }
-            CardResponse { strip, menu, tab_double_clicked: tabs_out.double_clicked, tabs: tabs_out.tabs, chevron: tabs_out.chevron }
+            CardResponse {
+                strip,
+                menu,
+                tab_clicked: tabs_out.clicked,
+                tab_double_clicked: tabs_out.double_clicked,
+                tabs: tabs_out.tabs,
+                chevron: tabs_out.chevron,
+            }
         })
         .inner;
     ui.add_space(6.0);
@@ -146,7 +158,14 @@ fn pro_panel(ui: &mut Ui, id: &str, tabs: &[&str], selected: &mut usize, collaps
         });
     }
     ui.add_space(2.0);
-    CardResponse { strip: strip_resp, menu: mresp, tab_double_clicked: tabs_out.double_clicked, tabs: tabs_out.tabs, chevron: tabs_out.chevron }
+    CardResponse {
+        strip: strip_resp,
+        menu: mresp,
+        tab_clicked: tabs_out.clicked,
+        tab_double_clicked: tabs_out.double_clicked,
+        tabs: tabs_out.tabs,
+        chevron: tabs_out.chevron,
+    }
 }
 
 pub fn pill_tab(ui: &mut Ui, label: &str, selected: bool) -> Response {

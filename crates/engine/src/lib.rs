@@ -21,6 +21,7 @@ pub mod build_info;
 mod canvas_geom;
 pub mod channel_cmds;
 pub mod color_cmds;
+pub mod color_to_alpha_cmds;
 pub mod commands;
 pub mod comps_cmds;
 pub mod cutout_cmds;
@@ -76,6 +77,7 @@ pub mod proof_sim;
 pub mod redeye_cmds;
 pub mod render_cmds;
 pub mod retouch_cmds;
+pub mod sample_cmds;
 pub mod select_extra_cmds;
 pub mod selection_cmds;
 pub mod slice_cmds;
@@ -470,6 +472,11 @@ impl Session {
         st.active_layer = active;
         fix_selection(st);
         channel_cmds::fix_view(st);
+        // An edit that changes no pixels (a selection, guides, a layer's name) leaves the canvas
+        // as it is; anything else recomposites the whole document unless the command reports
+        // its own damage after this. A new lasso selection on a large document used to cost a
+        // full recomposite (seconds on the CPU path, #1773).
+        let unchanged = layer_multi_cmds::same_pixels(&before, &st.doc);
         let key = self.coalesce_request.clone();
         let st = self.active_mut().ok_or(EngineError::NoDocument)?;
         let layers = st.layer_target();
@@ -482,7 +489,7 @@ impl Session {
         }
         st.coalesce = key;
         st.revision += 1;
-        st.last_damage = None;
+        st.last_damage = unchanged.then_some(photocraft_geom::Rect::EMPTY);
         Ok(r)
     }
 

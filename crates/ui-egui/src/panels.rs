@@ -147,6 +147,12 @@ pub fn toolbar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                             if resp.clicked() && ui.data(|d| d.get_temp::<egui::Id>(held_id)) != Some(key) {
                                 app.ui.tool = tool;
                             }
+                            // Double-clicking the Hand tool fits the image on screen (Photoshop).
+                            if resp.double_clicked() && tool == Tool::Hand {
+                                app.ui.tool = tool;
+                                // With no document open there is nothing to fit.
+                                let _ = app.run("view.fitOnScreen", json!({}));
+                            }
                             // Right-click or long-press opens the flyout (Photoshop).
                             let held_for = resp.is_pointer_button_down_on().then(|| ui.input(|i| i.pointer.press_start_time().map(|t0| i.time - t0))).flatten();
                             if slot.len() > 1
@@ -392,10 +398,13 @@ fn color_chips(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
 
 /// The app's top bar: brand mark, menus, the document title and the workspace controls. With
 /// [`PhotocraftApp::custom_titlebar`] (Windows and Linux) it is also the window's title bar, as in
-/// Photoshop on Windows: the caption buttons take its right end (`titlebar`).
+/// Photoshop on Windows: the caption buttons take its right end (`titlebar`). With the system
+/// title bar (Windows and Linux, `system_title_bar`) the OS draws its own icon and title, so the
+/// in-app bar shows menus and workspace controls only: no brand mark, no centred title.
 pub fn title_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let custom = app.custom_titlebar;
+    let system = system_title_bar(app);
     let left = if cfg!(target_os = "macos") && app.integrated_titlebar { 78 } else { 10 };
     let right = if custom { 0 } else { 10 };
     let bar = egui::Panel::top("title_bar")
@@ -422,10 +431,12 @@ pub fn title_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
             // whatever room is left between them, shortened or dropped rather than drawn over them.
             let (mut menus_right, mut controls_left) = (full.left(), full.right());
             ui.horizontal_centered(|ui| {
-                let side = if t.pro { 18.0 } else { 20.0 };
-                let (mark, _) = ui.allocate_exact_size(vec2(side, side), Sense::hover());
-                crate::brand::paint_mark(ui, mark);
-                ui.add_space(6.0);
+                if !system {
+                    let side = if t.pro { 18.0 } else { 20.0 };
+                    let (mark, _) = ui.allocate_exact_size(vec2(side, side), Sense::hover());
+                    crate::brand::paint_mark(ui, mark);
+                    ui.add_space(6.0);
+                }
                 // With the macOS menu bar the menus are at the top of the screen instead.
                 menus_right = if app.services.native_menu.is_some() { ui.cursor().left() } else { crate::menus::menu_bar(app, ui) };
                 // The menu bar takes the whole row, so the right-hand group gets its own rect:
@@ -487,6 +498,9 @@ pub fn title_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                 };
             });
             ui.ctx().data_mut(|d| d.insert_temp(span_id, (menus_right, controls_left)));
+            if system {
+                return;
+            }
             let font = theme::medium(13.0);
             let galley = ui.painter().layout_no_wrap(title.clone(), font.clone(), t.text_dim);
             if let Some(x) = title_x(full.center().x, menus_right, controls_left, galley.size().x) {
@@ -502,6 +516,32 @@ pub fn title_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         });
     if custom {
         crate::titlebar::caption_buttons(app, ui, bar.response.rect);
+    }
+}
+
+/// Whether the window shows the system's title bar instead of the app drawing its own: Windows
+/// and Linux with Preferences › Interface › System Title Bar. macOS always has system decorations,
+/// but keeps the in-app brand mark and centred title, so it never counts as system mode here; nor
+/// does the web build (the browser tab has no document title), nor an embedder or the snapshot
+/// example that never turned the preference on.
+pub fn system_title_bar(app: &PhotocraftApp) -> bool {
+    !app.custom_titlebar && app.session.prefs().interface.system_title_bar && !cfg!(any(target_os = "macos", target_arch = "wasm32"))
+}
+
+/// The OS window title: the active document's name suffixed with the app name (a `*` prefix
+/// marks unsaved changes, like the `•` in the app-drawn title), or just the app name with no
+/// document open.
+pub fn window_title(app: &PhotocraftApp) -> String {
+    app.session.active().map(|d| format!("{}{} \u{2014} PhotoCraft", if d.is_dirty() { "*" } else { "" }, d.doc.name)).unwrap_or_else(|| "PhotoCraft".into())
+}
+
+/// Keep the OS window title (and the taskbar / Alt-Tab entry) on the active file. Sends
+/// `ViewportCommand::Title` only when the title changed since the last frame.
+pub fn sync_window_title(app: &mut PhotocraftApp, ctx: &egui::Context) {
+    let want = window_title(app);
+    if app.last_window_title != want {
+        app.last_window_title = want.clone();
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(want));
     }
 }
 
@@ -529,7 +569,7 @@ fn title_x(center: f32, menus_right: f32, controls_left: f32, width: f32) -> Opt
 
 #[cfg(test)]
 mod title_tests {
-    use super::title_x;
+    use super::{system_title_bar, title_x, window_title};
 
     #[test]
     fn title_never_overlaps_menus_or_controls() {
@@ -543,6 +583,96 @@ mod title_tests {
         assert_eq!(title_x(400.0, 420.0, 480.0, 60.0), None);
         assert_eq!(title_x(f32::NAN, 420.0, 1300.0, 60.0), Some(436.0));
         assert_eq!(title_x(400.0, f32::INFINITY, 1300.0, 60.0), None);
+    }
+
+    fn app(custom_titlebar: bool) -> crate::PhotocraftApp {
+        let mut app = crate::PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        app.custom_titlebar = custom_titlebar;
+        // The preference that makes the shell launch without its own title bar.
+        app.session.edit_prefs(|p| p.interface.system_title_bar = !custom_titlebar);
+        app
+    }
+
+    #[test]
+    fn without_the_preference_the_mark_stays() {
+        // The default (e.g. the web build or the snapshot example): no custom bar, no preference.
+        let app = crate::PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        assert!(!system_title_bar(&app));
+    }
+
+    fn open_named(app: &mut crate::PhotocraftApp, name: &str) {
+        app.session.add_document(
+            photocraft_doc::Document::new(name, photocraft_doc::Size::new(4, 4), photocraft_doc::ColorMode::Rgb, photocraft_doc::SampleType::U8),
+            None,
+        );
+    }
+
+    #[test]
+    fn window_title_with_no_document_is_the_app_name() {
+        assert_eq!(window_title(&app(true)), "PhotoCraft");
+    }
+
+    #[test]
+    fn window_title_follows_the_active_file() {
+        let mut app = app(true);
+        open_named(&mut app, "foo.psd");
+        assert_eq!(window_title(&app), "foo.psd \u{2014} PhotoCraft");
+        // Unsaved changes gain a `*` prefix, like the `•` in the app-drawn title.
+        if let Some(st) = app.session.active_mut() {
+            st.revision += 1;
+        }
+        assert_eq!(window_title(&app), "*foo.psd \u{2014} PhotoCraft");
+    }
+
+    #[test]
+    fn system_mode_hides_the_mark_and_the_centred_title() {
+        for custom in [true, false] {
+            let mut app = app(custom);
+            open_named(&mut app, "foo.psd");
+            let ctx = egui::Context::default();
+            crate::PhotocraftApp::setup_context(&ctx, crate::theme::ThemeKind::ALL[0]);
+            let out = ctx.run_ui(egui::RawInput::default(), |ui| super::title_bar(&mut app, ui));
+            let mut out = out;
+            out.textures_delta.clear();
+            let mut texts = Vec::new();
+            for shape in &out.shapes {
+                collect_text(&shape.shape, &mut texts);
+            }
+            let system = system_title_bar(&app);
+            assert_eq!(system, !custom && !cfg!(target_os = "macos"));
+            assert_eq!(crate::brand::mark_rect(&ctx).is_some(), !system, "mark in system mode (custom={custom})");
+            assert_eq!(texts.iter().any(|t| t.contains("foo.psd")), !system, "centred title in system mode (custom={custom}): {texts:?}");
+        }
+    }
+
+    fn collect_text(shape: &egui::Shape, out: &mut Vec<String>) {
+        match shape {
+            egui::Shape::Text(t) => out.push(t.galley.text().to_string()),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_text(s, out)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn sync_window_title_sends_only_on_change() {
+        let mut app = app(true);
+        let ctx = egui::Context::default();
+        crate::PhotocraftApp::setup_context(&ctx, crate::theme::ThemeKind::ALL[0]);
+        super::sync_window_title(&mut app, &ctx);
+        assert_eq!(app.last_window_title, "PhotoCraft");
+        let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+        out.textures_delta.clear();
+        let cmds = out.viewport_output.remove(&egui::ViewportId::ROOT).map(|v| v.commands).unwrap_or_default();
+        assert!(cmds.iter().any(|c| matches!(c, egui::ViewportCommand::Title(t) if t == "PhotoCraft")), "{cmds:?}");
+        // Same document state again: the cached title stops a repeat command.
+        super::sync_window_title(&mut app, &ctx);
+        let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+        out.textures_delta.clear();
+        let cmds = out.viewport_output.remove(&egui::ViewportId::ROOT).map(|v| v.commands).unwrap_or_default();
+        assert!(!cmds.iter().any(|c| matches!(c, egui::ViewportCommand::Title(_))), "repeat Title: {cmds:?}");
+        open_named(&mut app, "foo.psd");
+        super::sync_window_title(&mut app, &ctx);
+        assert_eq!(app.last_window_title, "foo.psd \u{2014} PhotoCraft");
     }
 }
 
@@ -935,13 +1065,7 @@ pub fn options_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                         widgets::checkbox(ui, &mut app.ui.tool_options.move_auto_select, tl!("Auto-Select:"));
                         hint(ui, tl!("Drag to move the active layer"));
                     }
-                    Tool::Eyedropper => hint(
-                        ui,
-                        &crate::i18n::fmt(
-                            tl!("Click to sample the foreground colour  ·  {key}-click for background"),
-                            &[("key", &crate::shortcuts::pretty("Alt"))],
-                        ),
-                    ),
+                    Tool::Eyedropper => crate::eyedropper_ui::options(app, ui),
                     Tool::Zoom => {
                         widgets::checkbox(ui, &mut app.ui.tool_options.zoom_scrubby, tl!("Scrubby Zoom"));
                         hint(
@@ -1101,8 +1225,8 @@ pub fn status_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                     let (w, h, mode, bits, layers) =
                         (st.doc.size.width, st.doc.size.height, crate::canvas::mode_label(&st.doc), st.doc.depth.bits(), st.doc.layer_count());
                     let mut pct = app.ui.views[i].zoom * 100.0;
-                    if widgets::value_field(ui, &mut pct, 1.0..=3200.0, "%", 78.0).changed() {
-                        app.ui.views[i].zoom = pct / 100.0;
+                    if widgets::value_field(ui, &mut pct, crate::zoom_levels::percent_range(&app.ui.views[i]), "%", 78.0).changed() {
+                        app.ui.views[i].zoom = crate::zoom_levels::clamp(pct / 100.0, app.ui.views[i].doc_size);
                         app.ui.views[i].fit_pending = false;
                     }
                     widgets::vline(ui, 16.0);
@@ -1262,15 +1386,18 @@ fn info_panel(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         .hover_doc
         .map(|p| (p[0].floor() as i32, p[1].floor() as i32))
         .filter(|(x, y)| *x >= 0 && *y >= 0 && *x < size.width as i32 && *y < size.height as i32);
+    // The readout averages the Eyedropper's Sample Size, as in Photoshop (#1649).
+    let sample_size = app.ui.tool_options.eyedropper_size;
     let rgba = pos.and_then(|(x, y)| {
-        if let Some(((cx, cy, cr), v)) = app.info_sample
-            && (cx, cy, cr) == (x, y, rev)
+        if let Some(((cx, cy, cr, cs), v)) = app.info_sample
+            && (cx, cy, cr, cs) == (x, y, rev, sample_size)
         {
             return Some(v);
         }
-        let v: Vec<f32> = serde_json::from_value(app.session.execute("document.pixel", json!({"x": x, "y": y})).ok()?).ok()?;
-        let v = [v[0], v[1], v[2], v[3]];
-        app.info_sample = Some(((x, y, rev), v));
+        let params = json!({"x": f64::from(x) + 0.5, "y": f64::from(y) + 0.5, "size": sample_size});
+        let v: Vec<f32> = serde_json::from_value(app.session.execute("document.sampleColor", params).ok()?).ok()?;
+        let v = [*v.first()?, *v.get(1)?, *v.get(2)?, *v.get(3)?];
+        app.info_sample = Some(((x, y, rev, sample_size), v));
         Some(v)
     });
     let mono = theme::mono(11.5);
@@ -1361,9 +1488,11 @@ fn navigator(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
             }
         });
     });
-    let mut lz = v.zoom.max(0.01).log2();
-    if widgets::slider(ui, &mut lz, -6.64..=5.0, None).changed() {
-        app.ui.views[idx].zoom = 2f32.powf(lz);
+    // The whole zoom range, and always the current zoom: a narrower slider would pull it back.
+    let (lo, hi) = (crate::zoom_levels::min(v.doc_size).min(v.zoom).log2(), crate::zoom_levels::MAX.max(v.zoom).log2());
+    let mut lz = v.zoom.log2();
+    if lz.is_finite() && widgets::slider(ui, &mut lz, lo..=hi, None).changed() {
+        app.ui.views[idx].zoom = crate::zoom_levels::clamp(2f32.powf(lz), v.doc_size);
         app.ui.views[idx].fit_pending = false;
     }
 }
@@ -1434,20 +1563,22 @@ fn blend_options(groups: bool) -> Vec<(BlendMode, &'static str)> {
     std::iter::once(BlendMode::PassThrough).filter(|_| groups).chain(BlendMode::LAYER_MODES).map(|m| (m, m.label())).collect()
 }
 
-/// Scroll the Layers panel while holding a layer drag over its top/bottom edge.
+/// Scroll the Layers panel while holding a layer drag over its top/bottom edge or past them.
 ///
 /// Returns the *content* displacement in points for this frame, so positive moves the
 /// list downward (reveals rows above) and negative upward (reveals rows below).
-/// The speed ramps with proximity to the edge and uses elapsed time instead of
-/// assuming a particular refresh rate.
+/// The speed ramps with proximity to the edge and clamps to the maximum speed when
+/// dragged outside, using elapsed time instead of assuming a particular refresh rate.
 fn layer_drag_edge_scroll(pointer: Option<Pos2>, viewport: Rect, dragging: bool, dt: f32) -> f32 {
-    if !dragging || viewport.width() <= 0.0 || viewport.height() <= 0.0 {
+    if !dragging || viewport.width() <= 0.0 || viewport.height() <= 0.0 || dt.is_nan() || dt <= 0.0 {
         return 0.0;
     }
-    let Some(pointer) = pointer.filter(|p| viewport.contains(*p)) else { return 0.0 };
+    let Some(pointer) = pointer.filter(|p| p.x.is_finite() && p.y.is_finite() && p.x >= viewport.left() && p.x <= viewport.right()) else {
+        return 0.0;
+    };
     let edge = 32.0_f32.min(viewport.height() * 0.25);
-    let top = (edge - (pointer.y - viewport.top())).max(0.0) / edge;
-    let bottom = (edge - (viewport.bottom() - pointer.y)).max(0.0) / edge;
+    let top = ((edge - (pointer.y - viewport.top())) / edge).clamp(0.0, 1.0);
+    let bottom = ((edge - (viewport.bottom() - pointer.y)) / edge).clamp(0.0, 1.0);
     let direction = top - bottom;
     if direction == 0.0 {
         return 0.0;
@@ -1586,9 +1717,14 @@ fn layers(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         .min_scrolled_height(if fill { rows_h } else { 0.0 })
         .auto_shrink([false, !fill])
         .show(ui, |ui| {
-            // The drag key is set only by actual layer-row drags, not clicks or
+            // The drag keys are set only by actual layer-row and fx drags, not clicks or
             // ordinary scrolling. The ScrollArea applies this to its own content.
-            let dragging = ctx.data(|d| d.get_temp::<u64>(egui::Id::new("layer-drag"))).is_some() && ctx.input(|i| i.pointer.primary_down());
+            // An fx drag that never saw its release (the panel was hidden) must not outlive the button.
+            if !ctx.input(|i| i.pointer.primary_down() || i.pointer.any_released()) {
+                ctx.data_mut(|d| d.remove::<FxDrag>(fx_drag_key()));
+            }
+            let held = ctx.data(|d| d.get_temp::<u64>(egui::Id::new("layer-drag")).is_some() || d.get_temp::<FxDrag>(fx_drag_key()).is_some());
+            let dragging = held && ctx.input(|i| i.pointer.primary_down());
             let pointer = ctx.input(|i| i.pointer.interact_pos());
             let delta = layer_drag_edge_scroll(pointer, ui.clip_rect(), dragging, ctx.input(|i| i.stable_dt));
             if delta != 0.0 {
@@ -1644,9 +1780,11 @@ fn layers(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         let in_selection = selection.iter().any(|s| s.0 == id);
         (id, in_selection)
     });
+    fx_drag_feedback(&ctx, &doc);
     // End any layer drag after every row has had a chance to accept the drop.
     if ctx.input(|i| i.pointer.any_released()) {
         ctx.data_mut(|d| d.remove::<u64>(egui::Id::new("layer-drag")));
+        ctx.data_mut(|d| d.remove::<FxDrag>(fx_drag_key()));
     }
     widgets::panel_footer(ui, |ui| {
         let trash = icons::button(ui, "trash", 26.0, false, tl!("Delete layer"));
@@ -1886,6 +2024,7 @@ fn layer_row(
     let row_h = if t.pro { 32.0 } else { 46.0 };
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click_and_drag());
     layer_drag_and_drop(app, ctx, ui, l, rect, &resp, actions);
+    fx_drop(ctx, ui, l, rect, actions);
     if resp.drag_started() {
         crate::layer_transfer::begin_from_panel(app, ctx, l.id);
     }
@@ -1977,6 +2116,13 @@ fn layer_row(
     // Right-hand indicators first; the name gets what is left and ends in "…" (#144).
     let fx_open = app.session.active().is_none_or(|d| !d.fx_collapsed.contains(&l.id));
     let (name_right, indicators, fx_toggled) = crate::layer_row_ui::indicators(ui, &painter, rect, x, l, fx_open, actions);
+    // Dragging the fx badge drags all the layer's effects, not the layer (Photoshop). Like the eye,
+    // it takes the drag from the row; clicks still reach the row.
+    if let Some(&(_, badge)) = indicators.iter().find(|(k, _)| *k == crate::layer_row_ui::Indicator::Fx)
+        && ui.interact(badge, ui.id().with(("fx-badge", l.id.0)), Sense::drag()).drag_started()
+    {
+        start_fx_drag(ctx, l.id, None);
+    }
     let name_color = if l.visible { t.text } else { t.text_faint };
     let font = if selected && !t.pro { theme::medium(13.0) } else { egui::FontId::proportional(if t.pro { 12.0 } else { 13.0 }) };
     // Photoshop before 2026 set the Background layer's name in italics; 2026 sets it upright.
@@ -2085,6 +2231,12 @@ fn layer_row(
     });
 }
 
+/// Screen rect and UVs for a layer thumbnail: the document-shaped part of the square cell and of
+/// the letterboxed square texture, so tall and wide documents don't show empty bars.
+fn layer_thumb_fit(cell: Rect, w: u32, h: u32) -> (Rect, Rect) {
+    crate::channels_panel::fit_thumb(cell, w, h)
+}
+
 fn draw_layer_thumb(app: &mut PhotocraftApp, ctx: &egui::Context, ui: &egui::Ui, doc: &photocraft_doc::Document, l: &Layer, rect: Rect, selected: bool) {
     let t = Tokens::get(ctx);
     let p = ui.painter();
@@ -2111,9 +2263,11 @@ fn draw_layer_thumb(app: &mut PhotocraftApp, ctx: &egui::Context, ui: &egui::Ui,
         _ => {
             // Keep row layout and outside thumbnail decorations when the image is clipped.
             if ui.is_rect_visible(rect) {
-                widgets::checker(p, rect, 5.0);
+                // The texture is a letterboxed square: draw only the part the document fills.
+                let (fitted, uv) = layer_thumb_fit(rect, doc.size.width, doc.size.height);
+                widgets::checker(p, fitted, 5.0);
                 let tex = app.layer_thumb(ctx, doc, l);
-                p.image(tex, rect, Rect::from_min_max(egui::Pos2::ZERO, pos2(1.0, 1.0)), Color32::WHITE);
+                p.image(tex, fitted, uv, Color32::WHITE);
             }
         }
     }
@@ -2825,6 +2979,60 @@ fn layer_drag_and_drop(
     }
 }
 
+/// An fx row being dragged: the layer it belongs to and the effect index (`None` = the "Effects"
+/// row, all of them).
+type FxDrag = (u64, Option<usize>);
+
+fn fx_drag_key() -> egui::Id {
+    egui::Id::new("fx-drag")
+}
+
+/// Start dragging the effects of `layer`: one (`effect`) or all of them.
+fn start_fx_drag(ctx: &egui::Context, layer: LayerId, effect: Option<usize>) {
+    ctx.data_mut(|d| d.insert_temp::<FxDrag>(fx_drag_key(), (layer.0, effect)));
+}
+
+/// While effects are dragged: their name by the pointer, and the copy cursor while ⌥ is held.
+fn fx_drag_feedback(ctx: &egui::Context, doc: &photocraft_doc::Document) {
+    let Some((from, effect)) = ctx.data(|d| d.get_temp::<FxDrag>(fx_drag_key())) else { return };
+    let Some(p) = ctx.input(|i| i.pointer.interact_pos()) else { return };
+    let label = match effect {
+        Some(i) => doc.layer(LayerId(from)).and_then(|l| l.effects.items.get(i)).map_or("", |e| e.label()),
+        None => "Effects",
+    };
+    crate::layer_transfer::ghost(ctx, p, label);
+    if ctx.input(|i| i.modifiers.alt) {
+        ctx.set_cursor_icon(egui::CursorIcon::Copy);
+    }
+}
+
+/// The command for dropping effects of layer `from` on `target`: they move there, or with ⌥ held
+/// on release are copied (Photoshop). `effect` is one effect row, or all effects when `None`.
+fn fx_drop_action(from: u64, effect: Option<usize>, target: LayerId, copy: bool) -> (String, Value) {
+    let mut payload = json!({"from": from, "to": target.0, "copy": copy});
+    if let Some(o) = payload.as_object_mut()
+        && let Some(i) = effect
+    {
+        o.insert("effect".into(), json!(i));
+    }
+    ("layer.layerStyle.transferEffects".into(), payload)
+}
+
+/// A layer row accepts the fx row being dragged: outlined while the pointer is over it, dropped
+/// on release.
+fn fx_drop(ctx: &egui::Context, ui: &egui::Ui, l: &Layer, rect: Rect, actions: &mut Vec<(String, Value)>) {
+    let Some((from, effect)) = ctx.data(|d| d.get_temp::<FxDrag>(fx_drag_key())) else { return };
+    let Some(p) = ctx.input(|i| i.pointer.interact_pos()) else { return };
+    if from == l.id.0 || !rect.contains(p) {
+        return;
+    }
+    let t = Tokens::get(ctx);
+    ui.painter().rect_stroke(rect.shrink(1.0), t.radius_sm, Stroke::new(2.0, t.accent), StrokeKind::Inside);
+    if ctx.input(|i| i.pointer.any_released()) {
+        actions.push(fx_drop_action(from, effect, l.id, ctx.input(|i| i.modifiers.alt)));
+    }
+}
+
 /// Photoshop shows a layer's effects as indented sub-rows ("Effects", then each effect). The eye
 /// on "Effects" shows or hides them all, the eye on an effect's row just that one (#1622).
 fn effect_rows(app: &mut PhotocraftApp, ui: &mut egui::Ui, l: &Layer, depth: usize, actions: &mut Vec<(String, Value)>) {
@@ -2836,7 +3044,11 @@ fn effect_rows(app: &mut PhotocraftApp, ui: &mut egui::Ui, l: &Layer, depth: usi
         rows.push((e.label().to_string(), e.enabled(), kind));
     }
     for (i, (name, on, kind)) in rows.into_iter().enumerate() {
-        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click());
+        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click_and_drag());
+        // Drag the row onto another layer to move its effects there, ⌥-drag to copy them.
+        if resp.drag_started() {
+            start_fx_drag(ui.ctx(), l.id, i.checked_sub(1));
+        }
         if !ui.is_rect_visible(rect) {
             continue;
         }
@@ -3173,6 +3385,10 @@ mod history_transform_tests {
 mod layer_pct_slider_tests;
 
 #[cfg(test)]
+#[path = "fx_drag_tests.rs"]
+mod fx_drag_tests;
+
+#[cfg(test)]
 mod lock_tests {
     use super::*;
     use crate::canvas::{ToolEvent, tool_event};
@@ -3479,6 +3695,74 @@ mod toolbar_tests {
         assert!(!h.state().ui.panels.toolbar_double);
         assert_eq!(left(&h), single);
     }
+
+    fn click(h: &mut egui_kittest::Harness<'_, PhotocraftApp>, p: egui::Pos2) {
+        h.hover_at(p);
+        h.run_steps(1);
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+            h.run_steps(1);
+        }
+    }
+
+    /// The Hand tool's toolbar button: tool buttons have no label, so find it by slot order.
+    fn hand_button(h: &egui_kittest::Harness<'_, PhotocraftApp>) -> egui::Pos2 {
+        let size = egui::Vec2::splat(if Tokens::get(&h.ctx).pro { 30.0 } else { 36.0 });
+        let buttons: Vec<Rect> = h.ctx.viewport(|v| {
+            v.prev_pass.widgets.layers().flat_map(|(_, w)| w.iter()).filter(|w| w.rect.size() == size && w.sense.senses_click()).map(|w| w.rect).collect()
+        });
+        let index = TOOL_SECTIONS.iter().flat_map(|section| section.iter()).position(|slot| slot.contains(&Tool::Hand)).unwrap();
+        buttons[index].center()
+    }
+
+    fn toolbar_harness(app: PhotocraftApp) -> egui_kittest::Harness<'static, PhotocraftApp> {
+        // 60 fps steps, so two clicks a few frames apart are a double-click.
+        let mut h = egui_kittest::Harness::builder().with_size(vec2(800.0, 1400.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+            |ui, app: &mut PhotocraftApp| {
+                if ui.ctx().fonts(|f| f.families().contains(&egui::FontFamily::Name("medium".into()))) {
+                    toolbar(app, ui);
+                }
+            },
+            app,
+        );
+        PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::Studio);
+        h.run_steps(2);
+        h
+    }
+
+    /// Double-clicking the Hand tool fits the image on screen (Photoshop); a single click only
+    /// picks the tool.
+    #[test]
+    fn double_clicking_the_hand_tool_fits_on_screen() {
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"width": 64, "height": 64})).unwrap();
+        app.ui.tool = Tool::Move;
+        app.ui.views[0].fit_pending = false;
+        let mut h = toolbar_harness(app);
+        let p = hand_button(&h);
+        click(&mut h, p);
+        assert_eq!(h.state().ui.tool, Tool::Hand);
+        assert!(!h.state().ui.views[0].fit_pending, "a single click doesn't fit");
+        // Past the double-click window, so the next two clicks are a fresh double-click.
+        h.run_steps(40);
+        click(&mut h, p);
+        click(&mut h, p);
+        assert_eq!(h.state().ui.tool, Tool::Hand);
+        assert!(h.state().ui.views[0].fit_pending, "a double-click fits on screen");
+    }
+
+    /// With no document open the double-click still picks the tool and doesn't panic.
+    #[test]
+    fn double_clicking_the_hand_tool_without_a_document_is_harmless() {
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        app.ui.tool = Tool::Move;
+        let mut h = toolbar_harness(app);
+        let p = hand_button(&h);
+        click(&mut h, p);
+        click(&mut h, p);
+        assert_eq!(h.state().ui.tool, Tool::Hand);
+        assert!(h.state().session.active().is_none());
+    }
 }
 
 #[cfg(test)]
@@ -3486,7 +3770,7 @@ mod layer_drag_edge_scroll_tests {
     use super::*;
 
     #[test]
-    fn scrolls_both_edges_with_distance_dependent_velocity() {
+    fn inside_edge_scrolls_proportional_to_proximity() {
         let viewport = Rect::from_min_max(pos2(10.0, 30.0), pos2(310.0, 330.0));
         let point = |y| Some(pos2(100.0, y));
         let near_top = layer_drag_edge_scroll(point(33.0), viewport, true, 1.0 / 60.0);
@@ -3500,18 +3784,45 @@ mod layer_drag_edge_scroll_tests {
     }
 
     #[test]
-    fn scrolling_stops_outside_or_after_the_drag_finishes() {
+    fn outside_edges_scroll_in_drag_direction() {
+        let viewport = Rect::from_min_max(pos2(10.0, 30.0), pos2(310.0, 330.0));
+        let above = layer_drag_edge_scroll(Some(pos2(100.0, 20.0)), viewport, true, 1.0 / 60.0);
+        let below = layer_drag_edge_scroll(Some(pos2(100.0, 335.0)), viewport, true, 1.0 / 60.0);
+        assert!(above > 0.0, "dragging past the top continues scrolling upward");
+        assert!(below < 0.0, "dragging past the bottom continues scrolling downward");
+    }
+
+    #[test]
+    fn clamp_bounds_speed_outside_edges_and_across_frame_times() {
+        let viewport = Rect::from_min_max(pos2(10.0, 30.0), pos2(310.0, 330.0));
+        let at_top = layer_drag_edge_scroll(Some(pos2(100.0, 30.0)), viewport, true, 1.0 / 60.0);
+        let past_top = layer_drag_edge_scroll(Some(pos2(100.0, 15.0)), viewport, true, 1.0 / 60.0);
+        let far_past_top = layer_drag_edge_scroll(Some(pos2(100.0, -50.0)), viewport, true, 1.0 / 60.0);
+        assert_eq!(past_top, at_top, "speed past top edge is clamped to maximum edge speed");
+        assert_eq!(far_past_top, at_top, "speed far past top edge remains clamped");
+
+        let at_bottom = layer_drag_edge_scroll(Some(pos2(100.0, 330.0)), viewport, true, 1.0 / 60.0);
+        let past_bottom = layer_drag_edge_scroll(Some(pos2(100.0, 345.0)), viewport, true, 1.0 / 60.0);
+        let far_past_bottom = layer_drag_edge_scroll(Some(pos2(100.0, 500.0)), viewport, true, 1.0 / 60.0);
+        assert_eq!(past_bottom, at_bottom, "speed past bottom edge is clamped to maximum edge speed");
+        assert_eq!(far_past_bottom, at_bottom, "speed far past bottom edge remains clamped");
+
+        let active = Some(pos2(100.0, 325.0));
+        let step = layer_drag_edge_scroll(active, viewport, true, 1.0 / 60.0);
+        let twice = layer_drag_edge_scroll(active, viewport, true, 2.0 / 60.0);
+        assert!((twice - step * 2.0).abs() < 1e-4, "time-based scrolling scales across refresh rates");
+        assert!(layer_drag_edge_scroll(active, viewport, true, 0.5).abs() <= 30.0, "long frames have a bounded step");
+    }
+
+    #[test]
+    fn zero_when_no_drag_or_outside_horizontal_bounds() {
         let viewport = Rect::from_min_max(pos2(10.0, 30.0), pos2(310.0, 330.0));
         let active = Some(pos2(100.0, 325.0));
         assert_eq!(layer_drag_edge_scroll(active, viewport, false, 1.0 / 60.0), 0.0);
         assert_eq!(layer_drag_edge_scroll(None, viewport, true, 1.0 / 60.0), 0.0);
         assert_eq!(layer_drag_edge_scroll(Some(pos2(9.0, 325.0)), viewport, true, 1.0 / 60.0), 0.0);
-        assert_eq!(layer_drag_edge_scroll(Some(pos2(100.0, 335.0)), viewport, true, 1.0 / 60.0), 0.0);
+        assert_eq!(layer_drag_edge_scroll(Some(pos2(311.0, 325.0)), viewport, true, 1.0 / 60.0), 0.0);
         assert_eq!(layer_drag_edge_scroll(active, viewport, true, 0.0), 0.0);
-        let step = layer_drag_edge_scroll(active, viewport, true, 1.0 / 60.0);
-        let twice = layer_drag_edge_scroll(active, viewport, true, 2.0 / 60.0);
-        assert!((twice - step * 2.0).abs() < 1e-4, "time-based scrolling scales across refresh rates");
-        assert!(layer_drag_edge_scroll(active, viewport, true, 0.5).abs() <= 30.0, "long frames have a bounded step");
     }
 
     #[test]
@@ -3591,5 +3902,14 @@ mod group_drag_selection_tests {
         assert_eq!(layer_drop_payload(9, group, "into", &[a, b]), json!({"layer": 9, "target": 20, "position": "into"}));
         assert_eq!(layer_drop_payload(a.0, group, "above", &[a]), json!({"layer": 10, "target": 20, "position": "above"}));
         assert_eq!(layer_drop_payload(a.0, group, "below", &[]), json!({"layer": 10, "target": 20, "position": "below"}));
+    }
+
+    #[test]
+    fn layer_thumb_of_a_tall_document_fills_the_height() {
+        let cell = Rect::from_min_size(pos2(10.0, 20.0), vec2(30.0, 30.0));
+        let (r, uv) = layer_thumb_fit(cell, 100, 400);
+        assert_eq!((r.top(), r.bottom()), (cell.top(), cell.bottom()));
+        assert!((r.width() - 7.5).abs() < 1e-3, "{r:?}");
+        assert!((uv.width() - 0.25).abs() < 1e-3 && (uv.height() - 1.0).abs() < 1e-3, "{uv:?}");
     }
 }
