@@ -63,6 +63,19 @@ pub fn free_press(ctx: &egui::Context, canvas: egui::Rect) -> Option<egui::Pos2>
     })
 }
 
+/// Height of a dialog's title, rule, button row and frame margins (points), around a body that
+/// scrolls.
+const DIALOG_CHROME: f32 = 150.0;
+
+/// Where a dialog's last position is remembered: per command for command dialogs (each filter has
+/// its own), per kind for the rest.
+fn place_id(d: &Dialog) -> egui::Id {
+    match d.fields.get("__command").and_then(Value::as_str) {
+        Some(cmd) => egui::Id::new(("dialog-place", cmd)),
+        None => egui::Id::new(("dialog-place", format!("{:?}", d.kind))),
+    }
+}
+
 pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
     let dialogs = app.ui.dialogs.clone();
     let mut shown = Vec::new();
@@ -78,13 +91,16 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
         let mut apply_requested = false;
         let title = display_title(&d);
         let id = egui::Id::new(("dialog", d.id));
-        // Opens centred, then its top-left stays put (offset from the window's top-left, moved by
-        // dragging the title bar; view state only, so egui memory): a dialog whose body grows, like
-        // Layer Style switching effects, extends down and right instead of re-centring.
+        // Opens where the same dialog was last left (centred the first time), then its top-left
+        // stays put (offset from the window's top-left, moved by dragging the title bar; view
+        // state only, so egui memory): a dialog whose body grows, like Layer Style switching
+        // effects, extends down and right instead of re-centring.
         let pinned: Option<egui::Vec2> = ctx.data(|m| m.get_temp(id));
+        let place = place_id(&d);
+        let start = pinned.or_else(|| ctx.data_mut(|m| m.get_persisted::<egui::Vec2>(place)));
         let mut drag = egui::Vec2::ZERO;
         let mut sizing = false;
-        let area = match pinned {
+        let area = match start {
             Some(offset) => egui::Modal::default_area(id).anchor(egui::Align2::LEFT_TOP, offset),
             None => egui::Modal::default_area(id),
         };
@@ -195,7 +211,10 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
                     if fields.get("__command").and_then(Value::as_str) == Some("edit.colorSettings") {
                         fields.insert("__note".into(), Value::String(crate::monitor_status::note(app)));
                     }
-                    crate::filter_dialog::body(ui, &mut fields)
+                    // Long parameter lists (Flame, Lighting Effects) scroll, so the title and the
+                    // OK / Cancel buttons stay inside a small window.
+                    let room = (ctx.content_rect().height() - DIALOG_CHROME).max(120.0);
+                    egui::ScrollArea::vertical().id_salt(id.with("body")).max_height(room).show(ui, |ui| crate::filter_dialog::body(ui, &mut fields));
                 }
                 DialogKind::Command if fields.contains_key("__form") => crate::view_cmds::form_body(ui, &mut fields),
                 DialogKind::Command => {}
@@ -264,8 +283,12 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
             let screen = ctx.content_rect();
             // Keep the whole dialog (and so its title bar) on screen.
             let room = (screen.size() - modal.response.rect.size()).max(egui::Vec2::ZERO);
-            let offset = pinned.unwrap_or(modal.response.rect.min - screen.min) + drag;
-            ctx.data_mut(|m| m.insert_temp(id, offset.clamp(egui::Vec2::ZERO, room)));
+            let offset = (pinned.unwrap_or(modal.response.rect.min - screen.min) + drag).clamp(egui::Vec2::ZERO, room);
+            ctx.data_mut(|m| m.insert_temp(id, offset));
+            // A dialog the user moved reopens there (Photoshop remembers each dialog's place).
+            if drag != egui::Vec2::ZERO {
+                ctx.data_mut(|m| m.insert_persisted(place, offset));
+            }
         }
         // Esc cancels (topmost dialog, no popup open). A click outside does nothing: Photoshop keeps
         // the dialog, and the pointer may be panning or zooming the canvas under it.
@@ -388,7 +411,6 @@ pub fn open_command_dialog(app: &mut PhotocraftApp, command: &str, label: &str) 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn color_picker_has_inset_content_and_actions_at_the_right_edge() {
         use egui_kittest::{Harness, kittest::Queryable};
@@ -445,5 +467,62 @@ mod tests {
         let moved = harness.get_by_label("Layer Style").rect().min - before.min;
         assert!((moved - egui::vec2(-120.0, 80.0)).length() < 1.0, "dialog moved by {moved:?}");
         assert_eq!(harness.state().ui.dialogs.len(), 1, "dragging must not close the dialog");
+    }
+
+    fn dialog_harness(size: egui::Vec2, command: &str) -> egui_kittest::Harness<'static, PhotocraftApp> {
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"width": 64, "height": 64})).unwrap();
+        let mut h = egui_kittest::Harness::builder().with_size(size).build_ui_state(|ui, app| show(app, ui.ctx()), app);
+        PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
+        crate::filter_dialog::open(h.state_mut(), command).unwrap();
+        h.run_steps(4);
+        h
+    }
+
+    #[test]
+    fn a_tall_filter_dialog_keeps_its_title_and_buttons_in_a_small_window() {
+        // Filter › Render › Flame was taller than a 1000×560 window: OK and Cancel were cut off.
+        use egui_kittest::kittest::Queryable;
+        let size = egui::vec2(1000.0, 560.0);
+        let h = dialog_harness(size, "filter.render.flame");
+        for label in ["Flame", "OK", "Cancel"] {
+            let r = h.get_by_label(label).rect();
+            assert!(r.top() >= 0.0 && r.bottom() <= size.y, "{label} at {r:?} is outside the {size:?} window");
+        }
+    }
+
+    #[test]
+    fn a_moved_dialog_reopens_where_it_was_left() {
+        use egui_kittest::kittest::Queryable;
+        let size = egui::vec2(1280.0, 800.0);
+        let mut h = dialog_harness(size, "filter.blur.gaussianBlur");
+        let centred = h.get_by_label("Gaussian Blur").rect();
+        // Drag the title bar up and to the left.
+        let (from, by) = (centred.center(), egui::vec2(-240.0, -150.0));
+        h.event(egui::Event::PointerMoved(from));
+        h.event(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+        for k in 1..=6 {
+            h.event(egui::Event::PointerMoved(from + by * (k as f32 / 6.0)));
+            h.step();
+        }
+        h.event(egui::Event::PointerButton { pos: from + by, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+        h.run_steps(3);
+        let moved = h.get_by_label("Gaussian Blur").rect();
+        assert!((moved.min - (centred.min + by)).length() < 2.0, "dragged: {centred:?} → {moved:?}");
+        h.get_by_label("Cancel").click();
+        h.run_steps(3);
+        assert!(h.state().ui.dialogs.is_empty());
+        // Reopened: where it was left.
+        crate::filter_dialog::open(h.state_mut(), "filter.blur.gaussianBlur").unwrap();
+        h.run_steps(4);
+        let reopened = h.get_by_label("Gaussian Blur").rect();
+        assert!((reopened.min - moved.min).length() < 2.0, "reopened at {reopened:?}, left at {moved:?}");
+        h.get_by_label("Cancel").click();
+        h.run_steps(3);
+        // Another dialog keeps its own place: never moved, it opens centred.
+        crate::filter_dialog::open(h.state_mut(), "filter.blur.motionBlur").unwrap();
+        h.run_steps(4);
+        let other = h.get_by_label("Motion Blur").rect();
+        assert!(other.min.x > moved.min.x + 100.0, "Motion Blur opened centred: {other:?}");
     }
 }
