@@ -177,8 +177,8 @@ pub struct DocState {
     pub channel_view: channel_cmds::ChannelView,
     /// Select › Isolate Layers: the Layers panel lists only these layers (empty = off; view state).
     pub isolated_layers: Vec<LayerId>,
-    /// Painting symmetry axis made from the selected path (tool state, not document pixels).
-    pub symmetry_path: Option<symmetry_cmds::SymmetryAxis>,
+    /// Painting symmetry preset or sampled path (tool state, not document pixels).
+    pub symmetry: Option<symmetry_cmds::PaintingSymmetry>,
     /// Layers panel: layers whose effects list is collapsed under their row (the fx triangle;
     /// view state, not history). Effects lists start open.
     pub fx_collapsed: Vec<LayerId>,
@@ -209,7 +209,7 @@ impl DocState {
             coalesce: None,
             channel_view: Default::default(),
             isolated_layers: Vec::new(),
-            symmetry_path: None,
+            symmetry: None,
             fx_collapsed: Vec::new(),
             show_only: None,
             floating: None,
@@ -510,6 +510,48 @@ impl Session {
         }
         st.last_damage = Some(photocraft_geom::Rect::EMPTY);
         Ok(())
+    }
+
+    /// Re-renders the pixels of type layers whose font arrived after they were drawn (the web
+    /// build fetches served fonts on demand, `photocraft_text::served`). The layers' model is
+    /// unchanged, so this is no history step and leaves a clean document clean. Unknown documents
+    /// and layers are skipped. A document a background job is computing from must not move under
+    /// it: its layers are returned, to try again later.
+    pub fn refresh_type_layers(&mut self, layers: &[(photocraft_doc::DocId, LayerId)]) -> Vec<(photocraft_doc::DocId, LayerId)> {
+        let mut busy = Vec::new();
+        let mut docs: Vec<photocraft_doc::DocId> = Vec::new();
+        for (d, _) in layers {
+            if !docs.contains(d) {
+                docs.push(*d);
+            }
+        }
+        for doc_id in docs {
+            let mine = layers.iter().filter(|(d, _)| *d == doc_id);
+            if self.job_on(doc_id).is_some() {
+                busy.extend(mine);
+                continue;
+            }
+            let Some(st) = self.docs.iter_mut().find(|st| st.doc.id == doc_id) else { continue };
+            let snapshot = st.doc.clone();
+            let mut doc = (*snapshot).clone();
+            let mut changed = false;
+            for (_, id) in mine {
+                if let Some(photocraft_doc::Layer { content: photocraft_doc::LayerContent::Text(t), .. }) = doc.layer_mut(*id) {
+                    type_cmds::refresh(&snapshot, t);
+                    changed = true;
+                }
+            }
+            if changed {
+                let clean = st.saved_revision == st.revision;
+                st.doc = Arc::new(doc);
+                st.revision += 1;
+                if clean {
+                    st.saved_revision = st.revision;
+                }
+                st.last_damage = None;
+            }
+        }
+        busy
     }
 
     pub fn undo(&mut self) -> bool {

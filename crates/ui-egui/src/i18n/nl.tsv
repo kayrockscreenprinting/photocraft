@@ -2407,6 +2407,7 @@ cameraRaw	Color	Kleur
 	Degrees	Graden
 	Middle	Midden
 	Location	Locatie
+	Location:	Locatie:
 	Diameter	Diameter
 	Intensity	Intensiteit
 	Sensitivity	Gevoeligheid
@@ -3459,3 +3460,8 @@ cameraRaw	Whites	Witten
 	Point Sample	Puntmonster
 	Sample Size:	Monstergrootte:
 	Show Sampling Ring	Monsterring tonen
+
+# Painting symmetry presets.
+	Dual Axis	Dubbele as
+	Diagonal	Diagonaal
+	Transform Symmetry	Symmetrie transformeren
