@@ -2252,6 +2252,8 @@ cameraRaw	Amount	Cantidad
 	Color Picker (Text Color)	Selector de color (Color del texto)
 	Color Picker (Fill Color)	Selector de color (Color de relleno)
 	Fill color	Color de relleno
+	Color Picker (Stroke Color)	Selector de color (Color del trazo)
+	Stroke color	Color del trazo
 	Pick screen color	Elegir color de pantalla
 	Sample a pixel anywhere on the screen	Tomar un píxel en cualquier lugar de la pantalla
 	Click to pick · Esc to cancel	Clic para elegir · Esc para cancelar

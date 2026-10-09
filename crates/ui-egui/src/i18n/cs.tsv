@@ -2183,6 +2183,8 @@ cameraRaw	Color	Barvy
 	Color Picker (Text Color)	Výběr barvy (Barva textu)
 	Color Picker (Fill Color)	Výběr barvy (Barva výplně)
 	Fill color	Barva výplně
+	Color Picker (Stroke Color)	Výběr barvy (Barva tahu)
+	Stroke color	Barva tahu
 	Pick screen color	Vybrat barvu obrazovky
 	Sample a pixel anywhere on the screen	Vzorkovat pixel kdekoli na obrazovce
 	Click to pick · Esc to cancel	Kliknutí vybere · Esc zruší

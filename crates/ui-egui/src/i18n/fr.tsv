@@ -2609,6 +2609,8 @@ cameraRaw	Blending	Fusion
 	Color Picker (Text Color)	Sélecteur de couleurs (Couleur du texte)
 	Color Picker (Fill Color)	Sélecteur de couleurs (Couleur de remplissage)
 	Fill color	Couleur de remplissage
+	Color Picker (Stroke Color)	Sélecteur de couleurs (Couleur du contour)
+	Stroke color	Couleur du contour
 	Pick screen color	Choisir une couleur à l’écran
 	Sample a pixel anywhere on the screen	Prélever un pixel n’importe où sur l’écran
 	Click to pick · Esc to cancel	Cliquer pour choisir · Échap pour annuler

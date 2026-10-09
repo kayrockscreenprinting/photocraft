@@ -2616,6 +2616,8 @@ cameraRaw	Whites	Brancos
 	Color Picker (Text Color)	Seletor de cores (Cor do texto)
 	Color Picker (Fill Color)	Seletor de cores (Cor de preenchimento)
 	Fill color	Cor de preenchimento
+	Color Picker (Stroke Color)	Seletor de cores (Cor do traçado)
+	Stroke color	Cor do traçado
 	Pick screen color	Escolher cor da tela
 	Sample a pixel anywhere on the screen	Amostrar um pixel em qualquer lugar da tela
 	Click to pick · Esc to cancel	Clique para escolher · Esc para cancelar

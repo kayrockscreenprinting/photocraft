@@ -302,9 +302,9 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
         if let Some(dm) = app.ui.dialog_mut(d.id) {
             dm.fields = fields;
         }
-        // Edit › Fill's Color… and colour swatch open the Color Picker over the dialog.
+        // A colour swatch (Edit › Fill, Edit › Stroke) opens the Color Picker over the dialog.
         if outcome.is_none() {
-            crate::fill_ui::open_requested_picker(app, d.id);
+            crate::color_picker_ui::open_requested(app, d.id);
         }
         if apply_requested && outcome.is_none() {
             let _ = crate::prefs_ui::apply(app, d.id);

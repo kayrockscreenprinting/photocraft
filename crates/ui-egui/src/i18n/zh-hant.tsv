@@ -2160,6 +2160,8 @@ cameraRaw	Blending	混合
 	Color Picker (Text Color)	檢色器（文字顏色）
 	Color Picker (Fill Color)	檢色器（填滿顏色）
 	Fill color	填滿顏色
+	Color Picker (Stroke Color)	檢色器（筆畫顏色）
+	Stroke color	筆畫顏色
 	Pick screen color	選取螢幕顏色
 	Sample a pixel anywhere on the screen	在螢幕任意位置取樣像素
 	Click to pick · Esc to cancel	按一下選取 · Esc 取消

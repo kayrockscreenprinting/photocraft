@@ -3200,6 +3200,8 @@ cameraRaw	Roughness	Chropowatość
 	Color Picker (Text Color)	Próbnik kolorów (Kolor tekstu)
 	Color Picker (Fill Color)	Próbnik kolorów (Kolor wypełnienia)
 	Fill color	Kolor wypełnienia
+	Color Picker (Stroke Color)	Próbnik kolorów (Kolor obrysu)
+	Stroke color	Kolor obrysu
 	Pick screen color	Wybierz kolor z ekranu
 	Sample a pixel anywhere on the screen	Pobierz kolor piksela w dowolnym miejscu ekranu
 	Click to pick · Esc to cancel	Kliknij, aby wybrać · Esc, aby anulować

@@ -2202,6 +2202,8 @@
 	Color Picker (Text Color)	Kleurkiezer (tekstkleur)
 	Color Picker (Fill Color)	Kleurkiezer (vulkleur)
 	Fill color	Vulkleur
+	Color Picker (Stroke Color)	Kleurkiezer (lijnkleur)
+	Stroke color	Lijnkleur
 	Pick screen color	Schermkleur kiezen
 	Sample a pixel anywhere on the screen	Een pixel ergens op het scherm bemonsteren
 	Click to pick · Esc to cancel	Klik om te kiezen · Esc om te annuleren

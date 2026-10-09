@@ -2457,6 +2457,8 @@ cameraRaw	Roughness	Неровность
 	Color Picker (Text Color)	Палитра цветов (Цвет текста)
 	Color Picker (Fill Color)	Палитра цветов (Цвет заливки)
 	Fill color	Цвет заливки
+	Color Picker (Stroke Color)	Палитра цветов (Цвет обводки)
+	Stroke color	Цвет обводки
 	Pick screen color	Выбрать цвет на экране
 	Sample a pixel anywhere on the screen	Выберите пиксель в любом месте экрана
 	Click to pick · Esc to cancel	Щелчок — выбрать · Esc — отменить

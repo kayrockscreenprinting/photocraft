@@ -2164,6 +2164,8 @@ cameraRaw	Color	カラー
 	Color Picker (Text Color)	カラーピッカー（文字色）
 	Color Picker (Fill Color)	カラーピッカー（塗りつぶしカラー）
 	Fill color	塗りつぶしカラー
+	Color Picker (Stroke Color)	カラーピッカー（線のカラー）
+	Stroke color	線のカラー
 	Pick screen color	画面の色を選択
 	Sample a pixel anywhere on the screen	画面上の任意のピクセルから色を取得
 	Click to pick · Esc to cancel	クリックで選択 · Escでキャンセル

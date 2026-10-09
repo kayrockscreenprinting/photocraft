@@ -216,6 +216,25 @@ pub fn open_for_field(app: &mut PhotocraftApp, label: &str, rgb: [f32; 3], dialo
     app.ui.open_dialog(DialogKind::Command, f)
 }
 
+/// Set by a dialog body (to the picker's title) to open the Color Picker on its `color` field.
+const REQUEST: &str = "__pickColor";
+
+/// A dialog body asks for the Color Picker on its `color` field (Edit › Fill's Color… and colour
+/// swatch, Edit › Stroke's swatch). The dialog loop opens it ([`open_requested`]), since that
+/// needs the dialog's id.
+pub fn request(f: &mut Map<String, Value>, title: &str) {
+    f.insert(REQUEST.into(), json!(title));
+}
+
+/// Opens the Color Picker dialog `id`'s body asked for ([`request`]), on its colour: OK sets that
+/// dialog's `color` field (not the foreground), Cancel leaves it as it was.
+pub fn open_requested(app: &mut PhotocraftApp, id: u64) {
+    let Some(d) = app.ui.dialog_mut(id) else { return };
+    let Some(title) = d.fields.remove(REQUEST).and_then(|v| v.as_str().map(str::to_string)) else { return };
+    let rgb = d.fields.get("color").and_then(Value::as_str).and_then(parse_hex).unwrap_or([0.0; 3]);
+    open_for_field(app, &title, rgb, id, "color");
+}
+
 pub fn owns(f: &Map<String, Value>) -> bool {
     f.contains_key("__colorPicker")
 }
