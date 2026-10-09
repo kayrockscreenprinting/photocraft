@@ -46,6 +46,7 @@ pub mod comps_ui;
 pub mod control;
 pub mod credits;
 pub mod crop_ui;
+pub mod dialog_blend_ui;
 pub mod dialogs;
 pub mod direct_select;
 pub mod discard_ui;
@@ -55,6 +56,7 @@ pub mod dock;
 pub mod enable_rules;
 pub mod eraser_ui;
 pub mod export_dialog;
+pub mod eyedropper_ui;
 pub mod file_dialog;
 pub mod file_open;
 pub mod file_ui;
@@ -101,6 +103,7 @@ pub mod panels;
 pub mod parity;
 pub mod patch_preview;
 pub mod perspective_ui;
+pub mod pixel_grid;
 pub mod plugin_ui;
 pub mod point_curve;
 pub mod prefs_ui;
@@ -117,6 +120,7 @@ pub mod rotate_view;
 pub mod rulers;
 pub mod screen_picker;
 pub mod scrollbars;
+pub mod served_fonts;
 pub mod shortcut_dispatch;
 pub mod shortcuts;
 mod sizing;
@@ -126,6 +130,7 @@ pub mod snap_ui;
 pub mod state;
 pub mod stroke_constraint;
 pub mod stroke_trail;
+pub mod stroke_ui;
 pub mod stylus;
 pub mod swatches_ui;
 mod tab_strip;
@@ -149,6 +154,7 @@ pub mod wide_angle_ui;
 pub mod widgets;
 pub mod work_area;
 pub mod workspace_ui;
+pub mod zoom_levels;
 pub mod zoom_tool;
 
 use std::collections::HashMap;
@@ -315,6 +321,9 @@ pub struct Services {
 /// (document, compute ms, histograms)).
 pub(crate) type HistJob = (DocId, u64, std::sync::mpsc::Receiver<(DocId, f64, std::sync::Arc<tone::Histograms>)>);
 
+/// The Info panel's cached sample: pixel x, y, document revision and Eyedropper Sample Size.
+type InfoSampleKey = (i32, i32, u64, u32);
+
 pub struct PhotocraftApp {
     pub session: Session,
     pub ui: UiState,
@@ -379,6 +388,9 @@ pub struct PhotocraftApp {
     /// Windows and Linux: the window has no OS decorations and the app's top bar is the title bar
     /// (caption buttons, window dragging and edge resizing, `titlebar`).
     pub custom_titlebar: bool,
+    /// Last window title sent to the OS (`ViewportCommand::Title`, see `panels::sync_window_title`):
+    /// sent again only when it changes, so idle frames don't spam the backend.
+    last_window_title: String,
     fonts_ready: bool,
     /// Screen rect of the main canvas last frame (for overlays and the navigator).
     pub last_canvas_rect: egui::Rect,
@@ -453,8 +465,8 @@ pub struct PhotocraftApp {
     /// Pointer position over the canvas (document px), for the Info panel and status bar.
     pub(crate) hover_doc: Option<[f64; 2]>,
     pub(crate) clone_preview: Option<crate::canvas::ClonePreviewCache>,
-    /// Info panel sample cache: ((x, y, revision), composite RGBA).
-    info_sample: Option<((i32, i32, u64), [f32; 4])>,
+    /// Info panel sample cache: ((x, y, revision, Sample Size), composite RGBA).
+    info_sample: Option<(InfoSampleKey, [f32; 4])>,
     /// Guide being dragged (from a ruler or with the Move tool).
     pub(crate) guide_drag: Option<rulers::GuideDrag>,
     /// Crop tool gesture in progress (see `crop_ui`).
@@ -532,6 +544,7 @@ impl PhotocraftApp {
             styled: false,
             integrated_titlebar: false,
             custom_titlebar: false,
+            last_window_title: String::new(),
             fonts_ready: false,
             last_canvas_rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)),
             drop_canvas_rect: None,
@@ -1167,6 +1180,9 @@ impl eframe::App for PhotocraftApp {
             ui.disable();
             ui.set_opacity(1.0);
         }
+        // The OS title bar (and the taskbar / Alt-Tab entry) follows the active file; with the
+        // system title bar this is where the document name lives, as the in-app title is hidden.
+        panels::sync_window_title(self, &ctx);
         let chrome = !self.ui.view.hides_chrome();
         if !chrome && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             let _ = menus::invoke(self, &ctx, "view.screenMode.standard", serde_json::json!({}));
@@ -1527,6 +1543,30 @@ impl PhotocraftApp {
     }
 }
 
+/// The New Document dialog's key in the preferences' `dialogs` map.
+const NEW_DOCUMENT: &str = "file.new";
+
+/// New Document fields its OK remembers (#1810): the size, resolution, mode, depth, background and
+/// display units. Not the name, the preset or the clipboard size.
+const NEW_DOCUMENT_REMEMBERED: [&str; 8] = ["width", "height", "resolution", "mode", "depth", "background", "__unit", "__resUnit"];
+
+/// A remembered value the dialog can show (a corrupt preference is ignored).
+fn remembered_new_document_value(key: &str, v: &serde_json::Value) -> bool {
+    match key {
+        "width" | "height" => v.as_u64().is_some_and(|n| (1..=300_000).contains(&n)),
+        "resolution" => v.as_f64().is_some_and(|r| r.is_finite() && r > 0.0 && r <= 30_000.0),
+        "depth" => v.as_u64().is_some_and(|d| matches!(d, 1 | 8 | 16 | 32)),
+        _ => v.as_str().is_some_and(|s| !s.is_empty() && s.len() <= 64),
+    }
+}
+
+/// Remember the New Document fields `f` its OK used, for the next New Document.
+pub(crate) fn remember_new_document(app: &mut PhotocraftApp, f: &serde_json::Map<String, serde_json::Value>) {
+    let kept: serde_json::Map<String, serde_json::Value> =
+        NEW_DOCUMENT_REMEMBERED.iter().filter_map(|k| f.get(*k).filter(|v| remembered_new_document_value(k, v)).map(|v| (k.to_string(), v.clone()))).collect();
+    app.session.prefs.edit(|p| p.dialogs.insert(NEW_DOCUMENT.into(), serde_json::Value::Object(kept)));
+}
+
 fn clip_signature(w: u32, h: u32, px: &[u8]) -> u64 {
     let mut sig = (w as u64) << 32 | h as u64;
     for b in px.iter().step_by(997) {
@@ -1551,11 +1591,19 @@ impl PhotocraftApp {
         }
     }
 
-    /// File › New's fields: the defaults, plus the Clipboard preset (the clipboard image's size,
-    /// selected) when the clipboard holds an image. Opening the dialog is an explicit request, so
-    /// the OS clipboard is read here, as for a paste.
+    /// File › New's fields: the defaults, then the settings of the last document made with the
+    /// dialog (Photoshop starts from them, #1810), then the Clipboard preset (the clipboard image's
+    /// size, selected) when the clipboard holds an image. Opening the dialog is an explicit
+    /// request, so the OS clipboard is read here, as for a paste.
     pub(crate) fn new_document_fields(&mut self) -> serde_json::Map<String, serde_json::Value> {
         let mut f = crate::state::UiState::new_document_fields();
+        if let Some(serde_json::Value::Object(saved)) = self.session.prefs().dialogs.get(NEW_DOCUMENT) {
+            for k in NEW_DOCUMENT_REMEMBERED {
+                if let Some(v) = saved.get(k).filter(|v| remembered_new_document_value(k, v)) {
+                    f.insert(k.into(), v.clone());
+                }
+            }
+        }
         self.import_os_clipboard();
         if let Some(c) = self.session.clipboard.as_ref().filter(|c| !c.bounds.is_empty()) {
             crate::new_doc_ui::set_clipboard(&mut f, c.bounds.width(), c.bounds.height());
@@ -1597,6 +1645,9 @@ mod transform_undo_tests;
 
 #[cfg(test)]
 mod move_auto_select_tests;
+
+#[cfg(test)]
+mod new_doc_remember_tests;
 
 #[cfg(test)]
 mod hidden_layer_tests;

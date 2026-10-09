@@ -77,6 +77,7 @@ pub mod proof_sim;
 pub mod redeye_cmds;
 pub mod render_cmds;
 pub mod retouch_cmds;
+pub mod sample_cmds;
 pub mod select_extra_cmds;
 pub mod selection_cmds;
 pub mod slice_cmds;
@@ -471,6 +472,11 @@ impl Session {
         st.active_layer = active;
         fix_selection(st);
         channel_cmds::fix_view(st);
+        // An edit that changes no pixels (a selection, guides, a layer's name) leaves the canvas
+        // as it is; anything else recomposites the whole document unless the command reports
+        // its own damage after this. A new lasso selection on a large document used to cost a
+        // full recomposite (seconds on the CPU path, #1773).
+        let unchanged = layer_multi_cmds::same_pixels(&before, &st.doc);
         let key = self.coalesce_request.clone();
         let st = self.active_mut().ok_or(EngineError::NoDocument)?;
         let layers = st.layer_target();
@@ -483,7 +489,7 @@ impl Session {
         }
         st.coalesce = key;
         st.revision += 1;
-        st.last_damage = None;
+        st.last_damage = unchanged.then_some(photocraft_geom::Rect::EMPTY);
         Ok(r)
     }
 
@@ -504,6 +510,48 @@ impl Session {
         }
         st.last_damage = Some(photocraft_geom::Rect::EMPTY);
         Ok(())
+    }
+
+    /// Re-renders the pixels of type layers whose font arrived after they were drawn (the web
+    /// build fetches served fonts on demand, `photocraft_text::served`). The layers' model is
+    /// unchanged, so this is no history step and leaves a clean document clean. Unknown documents
+    /// and layers are skipped. A document a background job is computing from must not move under
+    /// it: its layers are returned, to try again later.
+    pub fn refresh_type_layers(&mut self, layers: &[(photocraft_doc::DocId, LayerId)]) -> Vec<(photocraft_doc::DocId, LayerId)> {
+        let mut busy = Vec::new();
+        let mut docs: Vec<photocraft_doc::DocId> = Vec::new();
+        for (d, _) in layers {
+            if !docs.contains(d) {
+                docs.push(*d);
+            }
+        }
+        for doc_id in docs {
+            let mine = layers.iter().filter(|(d, _)| *d == doc_id);
+            if self.job_on(doc_id).is_some() {
+                busy.extend(mine);
+                continue;
+            }
+            let Some(st) = self.docs.iter_mut().find(|st| st.doc.id == doc_id) else { continue };
+            let snapshot = st.doc.clone();
+            let mut doc = (*snapshot).clone();
+            let mut changed = false;
+            for (_, id) in mine {
+                if let Some(photocraft_doc::Layer { content: photocraft_doc::LayerContent::Text(t), .. }) = doc.layer_mut(*id) {
+                    type_cmds::refresh(&snapshot, t);
+                    changed = true;
+                }
+            }
+            if changed {
+                let clean = st.saved_revision == st.revision;
+                st.doc = Arc::new(doc);
+                st.revision += 1;
+                if clean {
+                    st.saved_revision = st.revision;
+                }
+                st.last_damage = None;
+            }
+        }
+        busy
     }
 
     pub fn undo(&mut self) -> bool {
