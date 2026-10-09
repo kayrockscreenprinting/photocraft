@@ -55,6 +55,7 @@ pub mod dock;
 pub mod enable_rules;
 pub mod eraser_ui;
 pub mod export_dialog;
+pub mod eyedropper_ui;
 pub mod file_dialog;
 pub mod file_open;
 pub mod file_ui;
@@ -149,6 +150,7 @@ pub mod wide_angle_ui;
 pub mod widgets;
 pub mod work_area;
 pub mod workspace_ui;
+pub mod zoom_levels;
 pub mod zoom_tool;
 
 use std::collections::HashMap;
@@ -315,6 +317,9 @@ pub struct Services {
 /// (document, compute ms, histograms)).
 pub(crate) type HistJob = (DocId, u64, std::sync::mpsc::Receiver<(DocId, f64, std::sync::Arc<tone::Histograms>)>);
 
+/// The Info panel's cached sample: pixel x, y, document revision and Eyedropper Sample Size.
+type InfoSampleKey = (i32, i32, u64, u32);
+
 pub struct PhotocraftApp {
     pub session: Session,
     pub ui: UiState,
@@ -453,8 +458,8 @@ pub struct PhotocraftApp {
     /// Pointer position over the canvas (document px), for the Info panel and status bar.
     pub(crate) hover_doc: Option<[f64; 2]>,
     pub(crate) clone_preview: Option<crate::canvas::ClonePreviewCache>,
-    /// Info panel sample cache: ((x, y, revision), composite RGBA).
-    info_sample: Option<((i32, i32, u64), [f32; 4])>,
+    /// Info panel sample cache: ((x, y, revision, Sample Size), composite RGBA).
+    info_sample: Option<(InfoSampleKey, [f32; 4])>,
     /// Guide being dragged (from a ruler or with the Move tool).
     pub(crate) guide_drag: Option<rulers::GuideDrag>,
     /// Crop tool gesture in progress (see `crop_ui`).
