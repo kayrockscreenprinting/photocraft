@@ -644,3 +644,6 @@ pub(crate) fn fix_selection(st: &mut DocState) {
 mod fill_layer_mode_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod fx_mode_tests;
