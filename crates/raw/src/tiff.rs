@@ -313,13 +313,13 @@ impl<'a> Tiff<'a> {
     }
 }
 
-/// A human-readable listing of every IFD and entry (debugging aid).
 /// The EXIF orientation (1..=8) of a raw tag value; anything else is the default 1. The range is
 /// checked on the `u32`: narrowing first let a LONG like 65538 pass as 2 (#1817).
 pub(crate) fn orientation(v: Option<u32>) -> u16 {
     v.filter(|o| (1..=8).contains(o)).and_then(|o| u16::try_from(o).ok()).unwrap_or(1)
 }
 
+/// A human-readable listing of every IFD and entry (debugging aid).
 pub(crate) fn dump(data: &[u8]) -> String {
     use std::fmt::Write;
     let Some(t) = Tiff::new(data) else { return "not a TIFF-structured file".into() };
