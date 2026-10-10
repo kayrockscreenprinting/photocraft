@@ -1238,8 +1238,6 @@ fn appearance_rows(ui: &mut egui::Ui, obj: &mut Map<String, Value>, system: Opti
     ui.add_space(12.0);
 }
 
-/// Generic editor for a section's fields: checkboxes, dropdowns for choices, colour swatches,
-/// number fields with the preference's range, text fields.
 /// Where a clicked colour swatch leaves its preference path and label for the dialog body, which
 /// holds the fields the Color Picker request goes in.
 const PICK_ID: &str = "prefs-pick-color";
@@ -1249,6 +1247,8 @@ fn ctx_take_pick(ui: &egui::Ui) -> Option<(String, String)> {
     ui.ctx().data_mut(|d| d.remove_temp::<(String, String)>(egui::Id::new(PICK_ID)))
 }
 
+/// Generic editor for a section's fields: checkboxes, dropdowns for choices, colour swatches,
+/// number fields with the preference's range, text fields.
 fn section_fields(ui: &mut egui::Ui, section: &str, obj: &mut Map<String, Value>, order: &[String], lang: crate::i18n::Lang, system: Option<egui::Theme>) {
     let t = Tokens::get(ui.ctx());
     if section == "interface" {
