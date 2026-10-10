@@ -2474,6 +2474,7 @@ cameraRaw	Roughness	Шорсткість
 
 # Shared screen eyedropper and text Color Picker (#1128).
 	Color Picker (Text Color)	Вибір кольору (колір тексту)
+	Color Picker ({name})	Вибір кольору ({name})
 	Color Picker (Fill Color)	Вибір кольору (колір заливки)
 	Fill color	Колір заливки
 	Color Picker (Stroke Color)	Вибір кольору (колір обведення)

@@ -2263,6 +2263,7 @@
 
 # Shared screen eyedropper and text Color Picker (#1128).
 	Color Picker (Text Color)	Farbwähler (Textfarbe)
+	Color Picker ({name})	Farbwähler ({name})
 	Color Picker (Fill Color)	Farbwähler (Füllfarbe)
 	Fill color	Füllfarbe
 	Color Picker (Stroke Color)	Farbwähler (Konturfarbe)

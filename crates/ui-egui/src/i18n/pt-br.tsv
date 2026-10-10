@@ -2657,6 +2657,7 @@ cameraRaw	Whites	Brancos
 
 # Shared screen eyedropper and text Color Picker (#1128).
 	Color Picker (Text Color)	Seletor de cores (Cor do texto)
+	Color Picker ({name})	Seletor de cores ({name})
 	Color Picker (Fill Color)	Seletor de cores (Cor de preenchimento)
 	Fill color	Cor de preenchimento
 	Color Picker (Stroke Color)	Seletor de cores (Cor do traçado)

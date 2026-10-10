@@ -2297,6 +2297,7 @@ cameraRaw	Amount	Quantità
 
 # Shared screen eyedropper and text Color Picker (#1128).
 	Color Picker (Text Color)	Selettore colore (Colore del testo)
+	Color Picker ({name})	Selettore colore ({name})
 	Color Picker (Fill Color)	Selettore colore (Colore di riempimento)
 	Fill color	Colore di riempimento
 	Color Picker (Stroke Color)	Selettore colore (Colore della traccia)

@@ -2649,6 +2649,7 @@ cameraRaw	Blending	Fusion
 
 # Shared screen eyedropper and text Color Picker (#1128).
 	Color Picker (Text Color)	Sélecteur de couleurs (Couleur du texte)
+	Color Picker ({name})	Sélecteur de couleurs ({name})
 	Color Picker (Fill Color)	Sélecteur de couleurs (Couleur de remplissage)
 	Fill color	Couleur de remplissage
 	Color Picker (Stroke Color)	Sélecteur de couleurs (Couleur du contour)

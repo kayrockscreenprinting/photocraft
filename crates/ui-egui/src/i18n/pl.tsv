@@ -3241,6 +3241,7 @@ cameraRaw	Roughness	Chropowatość
 
 # Text Color Picker and screen sampling
 	Color Picker (Text Color)	Próbnik kolorów (Kolor tekstu)
+	Color Picker ({name})	Próbnik kolorów ({name})
 	Color Picker (Fill Color)	Próbnik kolorów (Kolor wypełnienia)
 	Fill color	Kolor wypełnienia
 	Color Picker (Stroke Color)	Próbnik kolorów (Kolor obrysu)

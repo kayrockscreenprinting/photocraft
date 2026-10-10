@@ -2636,6 +2636,7 @@ cameraRaw	Blending	Pembauran
 
 # Shared screen eyedropper and text Color Picker (#1128).
 	Color Picker (Text Color)	Pemilih Warna (Warna Teks)
+	Color Picker ({name})	Pemilih Warna ({name})
 	Color Picker (Fill Color)	Pemilih Warna (Warna Isian)
 	Fill color	Warna isian
 	Color Picker (Stroke Color)	Pemilih Warna (Warna Stroke)

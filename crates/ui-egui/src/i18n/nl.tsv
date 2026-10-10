@@ -2240,6 +2240,7 @@
 	Knockout	Uitsparing
 	Apply At Canvas Bounds	Toepassen op canvasgrenzen
 	Color Picker (Text Color)	Kleurkiezer (tekstkleur)
+	Color Picker ({name})	Kleurkiezer ({name})
 	Color Picker (Fill Color)	Kleurkiezer (vulkleur)
 	Fill color	Vulkleur
 	Color Picker (Stroke Color)	Kleurkiezer (lijnkleur)

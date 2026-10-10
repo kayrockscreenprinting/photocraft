@@ -2201,6 +2201,7 @@ cameraRaw	Blending	混合
 
 # Shared screen eyedropper and text Color Picker (#1128).
 	Color Picker (Text Color)	檢色器（文字顏色）
+	Color Picker ({name})	檢色器（{name}）
 	Color Picker (Fill Color)	檢色器（填滿顏色）
 	Fill color	填滿顏色
 	Color Picker (Stroke Color)	檢色器（筆畫顏色）

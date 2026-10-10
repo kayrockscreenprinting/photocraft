@@ -2224,6 +2224,7 @@ cameraRaw	Color	Barvy
 
 # Shared screen eyedropper and text Color Picker (#1128).
 	Color Picker (Text Color)	Výběr barvy (Barva textu)
+	Color Picker ({name})	Výběr barvy ({name})
 	Color Picker (Fill Color)	Výběr barvy (Barva výplně)
 	Fill color	Barva výplně
 	Color Picker (Stroke Color)	Výběr barvy (Barva tahu)

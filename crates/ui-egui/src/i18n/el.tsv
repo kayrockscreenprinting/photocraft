@@ -3453,6 +3453,7 @@ fontWeight	Thin	Πολύ λεπτά
 
 # Shared text style Color Picker (#2015)
 	Color Picker (Text Color)	Επιλογέας χρώματος (χρώμα κειμένου)
+	Color Picker ({name})	Επιλογέας χρώματος ({name})
 	Auto Hide Notifications	Αυτόματη απόκρυψη ειδοποιήσεων
 	Notification Duration (seconds)	Διάρκεια ειδοποίησης (δευτερόλεπτα)
 	Appearance Mode	Λειτουργία εμφάνισης
